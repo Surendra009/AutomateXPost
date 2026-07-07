@@ -227,7 +227,7 @@ async def pipeline_run(request: Request):
     status = get_pipeline_status()
     if status["running"]:
         raise HTTPException(status_code=409, detail="Pipeline is already running")
-    return await run_pipeline_cycle()
+    return await run_pipeline_cycle(force=True)
 
 
 @router.patch("/settings")

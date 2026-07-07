@@ -450,8 +450,16 @@ async function loadSettings() {
       </div>`).join('');
 
     const lastRun = pipe.last_run_at ? formatDate(pipe.last_run_at) : 'Never';
+    const sched = pipe.schedule || {};
+    const schedLabel = sched.quiet_hours
+      ? `Quiet (${sched.quiet_window || '10pm–5am'})`
+      : (sched.next_mode === 'catchup' ? 'Catch-up at 5am' : 'Active (6am–10pm)');
     const err = pipe.last_error ? `<div class="pipeline-error">${esc(pipe.last_error)}</div>` : '';
     document.getElementById('pipeline-status').innerHTML = `
+      <div class="status-row">
+        <span>Schedule</span>
+        <span>${esc(schedLabel)}${sched.timezone ? ` · ${esc(sched.timezone)}` : ''}</span>
+      </div>
       <div class="status-row">
         <span>Last fetch</span>
         <span>${esc(lastRun)}</span>
