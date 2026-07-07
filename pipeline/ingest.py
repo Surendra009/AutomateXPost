@@ -11,7 +11,15 @@ import httpx
 from rapidfuzz import fuzz
 from sqlmodel import select
 
-from config import MAX_NEWS_AGE_HOURS, RSS_FEEDS, AI_RSS_FEEDS, SEC_EDGAR_8K_FEED, SEC_USER_AGENT, get_finnhub_key
+from config import (
+    DEFAULT_FINNHUB_TICKERS,
+    MAX_NEWS_AGE_HOURS,
+    RSS_FEEDS,
+    AI_RSS_FEEDS,
+    SEC_EDGAR_8K_FEED,
+    SEC_USER_AGENT,
+    get_finnhub_key,
+)
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Headline
@@ -181,7 +189,7 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
     finnhub_general = fetch_finnhub_general_news()
     source_batches.append(("Finnhub", finnhub_general))
 
-    finnhub_company = fetch_finnhub_company_news(watchlist)
+    finnhub_company = fetch_finnhub_company_news(watchlist or DEFAULT_FINNHUB_TICKERS)
     if finnhub_company:
         source_batches.append(("Finnhub watchlist", finnhub_company))
 

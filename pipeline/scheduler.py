@@ -12,6 +12,7 @@ from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.filter import filter_headlines
 from pipeline.freshness import discard_stale_headlines
 from pipeline.ingest import get_unfiltered_headlines, ingest_headlines
+from pipeline.prioritize import select_diverse_for_drafting, select_headlines_for_filter
 from pipeline.stale import expire_stale_drafts
 
 logger = setup_logging()
@@ -123,10 +124,11 @@ async def run_pipeline_cycle() -> dict:
             ingest_by_source["Finnhub Earnings"] = earnings_ingested
         drafts_created = earnings_drafts
 
-        headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE)
+        headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
+        headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
         if headlines:
             filtered = filter_headlines(headlines)
-            filtered = filtered[: MAX_DRAFTS_PER_CYCLE * 2]
+            filtered = select_diverse_for_drafting(filtered, MAX_DRAFTS_PER_CYCLE * 2)
             if filtered:
                 drafts_created += draft_posts(filtered)
 

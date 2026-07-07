@@ -37,8 +37,8 @@ LOG_FILE = BASE_DIR / "postpilot.log"
 FILTER_MODEL = "claude-haiku-4-5"
 DRAFT_MODEL = "claude-sonnet-4-6"
 PIPELINE_INTERVAL_SECONDS = 300  # 5 min
-MAX_HEADLINES_PER_CYCLE = 20
-MAX_DRAFTS_PER_CYCLE = 2
+MAX_HEADLINES_PER_CYCLE = 35
+MAX_DRAFTS_PER_CYCLE = 3
 MAX_EARNINGS_DRAFTS_PER_CYCLE = 5
 MIN_RELEVANCE_SCORE = 0.75
 MIN_AI_RELEVANCE_SCORE = 0.72  # slightly lower bar for major AI product news
@@ -73,6 +73,9 @@ SEC_EDGAR_8K_FEED = (
     "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-k&company=&dateb=&owner=include&count=40&output=atom",
 )
 SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "PostPilot/1.0 (automated news bot)")
+
+# Default tickers for Finnhub company news when watchlist is empty
+DEFAULT_FINNHUB_TICKERS = ["NVDA", "MSFT", "GOOGL", "META", "AMZN", "AAPL", "TSLA", "AMD"]
 
 DEFAULT_SETTINGS = {
     "pipeline_enabled": True,

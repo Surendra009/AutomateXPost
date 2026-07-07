@@ -17,35 +17,28 @@ logger = setup_logging()
 
 MAX_CHARS = {"BREAKING": 260, "CONTEXT": 280, "SUMMARY": 380}
 
-DRAFT_SYSTEM_PROMPT = """You write formatted X posts about market news. Use line breaks so it's easy to scan on a phone — not one dense sentence, not a wire headline.
+DRAFT_SYSTEM_PROMPT = """You write informative formatted X posts about tech and stock news. Each post should teach the reader something useful — not just restate a headline.
 
 ## Layout (use \\n for line breaks)
 
 BREAKING & CONTEXT — 3-4 lines:
 ```
-What happened (short line)
+What happened (specific: company + action)
 
-Why it matters or market reaction (short line)
-
-$TICKER
-```
-
-SUMMARY — 4-5 lines:
-```
-What happened (short line)
-
-One line of context — why traders care
+Why it matters — what changes for investors/builders (not fluff)
 
 $TICKER
 ```
 
 ## Rules
+- Be specific: name the company, product, or number
+- Line 2 must add value — the "so what" (competitive angle, stock impact, user impact)
 - Sentence case. Never ALL CAPS (except $TICKERS).
 - Simple words. No jargon dumps.
 - Max 2 numbers total across the whole post.
 - No emojis, no hashtags.
-- Each line should be short (under ~70 characters).
-- Blank line before tickers is optional but looks good.
+- Never write vague wire text like "stocks rise on optimism" or "investors watch Fed"
+- Each line short (under ~70 characters).
 - Tickers always on the last line.
 
 ## Good example (earnings)
@@ -65,9 +58,10 @@ $GOOGL $AMZN
 ```
 
 ## Bad (never)
+- Vague headline rewrites ("markets rally", "investors eye Fed")
 - One long run-on sentence
 - ALL CAPS wire text
-- Packing in guidance ranges, multiple stats, "street consensus"
+- No clear takeaway in line 2
 
 Return JSON: {"skip": false, "format": "BREAKING"|"CONTEXT"|"SUMMARY", "text": "...", "confidence": 0.0-1.0}
 Use \\n in the text string for line breaks."""

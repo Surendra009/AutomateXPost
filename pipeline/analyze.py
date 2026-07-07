@@ -27,7 +27,7 @@ Return JSON:
 
 Rules:
 - hook = the news in everyday language ("Google shipped Gemini 2.5 with better reasoning")
-- why_it_matters = the reaction or surprise ("puts pressure on OpenAI's API pricing")
+- why_it_matters = the useful takeaway — stock impact, competitive angle, or user impact
 - For AI product news: focus on what launched or changed, not stock price unless obvious
 - Do NOT pack in extra stats, guidance ranges, or secondary facts
 - publish=false if you can't explain it simply in those two sentences

@@ -12,6 +12,7 @@ from models import Headline
 from pipeline.ai_news import enrich_ai_classification, is_ai_source, is_material_ai_update
 from pipeline.freshness import is_fresh
 from pipeline.noise import is_obvious_noise
+from pipeline.prioritize import composite_score
 
 logger = setup_logging()
 
@@ -109,8 +110,9 @@ def _build_batch_prompt(headlines: list[Headline], watchlist: list[str]) -> str:
     watchlist_str = ", ".join(watchlist) if watchlist else "none (only pass high-impact stories)"
     lines = [
         f"User watchlist: {watchlist_str}",
-        "User wants AI company news: OpenAI, Anthropic/Claude, Google/Gemini, Meta, Microsoft, Nvidia — new models, capabilities, features.",
-        "Without watchlist: pass high-impact market stories OR material AI product news.",
+        "User wants tech & stock news: specific companies, earnings, AI product launches, tickers.",
+        "Deprioritize vague wire headlines (market wrap, stocks rise/fall) unless they name a company or data release.",
+        "Without watchlist: pass high-impact stock/tech stories OR material AI product news.",
         "",
     ]
     for i, h in enumerate(headlines):
@@ -238,8 +240,8 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
                     session.add(row)
                     session.commit()
 
-    # Sort by relevance_score desc, keep top N for drafting
-    results.sort(key=lambda x: float(x[1].get("relevance_score", 0)), reverse=True)
+    # Sort by composite score (tech/stock/AI sources boosted)
+    results.sort(key=lambda x: composite_score(x[0], x[1]), reverse=True)
 
     logger.info(
         "Filter kept %d/%d headlines (after pre-filter %d)",
