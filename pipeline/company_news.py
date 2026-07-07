@@ -1,0 +1,170 @@
+"""Finnhub company news — zero-LLM drafts using explicit ticker fields."""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timedelta
+from typing import Any
+
+from config import DEFAULT_FINNHUB_TICKERS, MAX_COMPANY_NEWS_DRAFTS_PER_CYCLE
+from database import get_setting
+from logging_config import setup_logging
+from pipeline.earnings import DEFAULT_EARNINGS_SYMBOLS
+from pipeline.finnhub_api import finnhub_get, get_finnhub_key, parse_finnhub_timestamp
+from pipeline.structured_common import content_hash, save_structured_draft
+
+logger = setup_logging()
+
+COMPANY_NEWS_SOURCE = "Finnhub Company"
+
+BEAT_MISS = re.compile(
+    r"\b(beat|beats|beating|topped|tops|exceeded|exceeds|surpassed|"
+    r"missed|misses|missing|fell short|below expectations|in.?line with)\b",
+    re.I,
+)
+EARNINGS_CONTEXT = re.compile(
+    r"\b(eps|earnings|revenue|sales|quarterly results|q[1-4])\b",
+    re.I,
+)
+GUIDANCE = re.compile(r"\b(guidance (raised|lowered|cut|hiked)|outlook (raised|lowered|cut))\b", re.I)
+DEAL = re.compile(r"\b(acquires?|acquisition|merger|to buy|deal to)\b", re.I)
+
+
+def _in_scope(symbol: str, watchlist: list[str]) -> bool:
+    sym = symbol.upper()
+    if watchlist:
+        return sym in {w.upper() for w in watchlist}
+    return sym in DEFAULT_EARNINGS_SYMBOLS
+
+
+def _fetch_company_news(symbol: str, from_date: str, to_date: str) -> list[dict[str, Any]]:
+    data, err = finnhub_get(
+        "company-news",
+        {"symbol": symbol, "from": from_date, "to": to_date},
+    )
+    if err:
+        logger.warning("Finnhub company news %s: %s", symbol, err)
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _beat_miss_word(match: re.Match) -> str:
+    word = match.group(0).lower()
+    if word in ("missed", "misses", "missing", "fell short", "below expectations"):
+        return "missed"
+    if "in-line" in word or "inline" in word:
+        return "matched"
+    return "beat"
+
+
+def _build_draft(symbol: str, headline: str, summary: str) -> tuple[str, str, str, str, str, float] | None:
+    text = f"{headline} {summary}"
+    bm = BEAT_MISS.search(headline)
+
+    if bm and EARNINGS_CONTEXT.search(text):
+        verb = _beat_miss_word(bm)
+        line1 = f"{symbol} {verb} quarterly earnings expectations"
+        if verb == "beat":
+            line2 = "Stock likely repricing on the upside surprise"
+        elif verb == "missed":
+            line2 = "Stock likely repricing on the disappointment"
+        else:
+            line2 = "Results largely in line with the street"
+        impact = "high" if verb in ("beat", "missed") else "med"
+        fmt = "BREAKING"
+        confidence = 0.9
+        category = "earnings"
+    elif GUIDANCE.search(text):
+        line1 = f"{symbol} updated guidance"
+        line2 = "Forward outlook reset for the stock"
+        impact = "high"
+        fmt = "BREAKING"
+        confidence = 0.88
+        category = "earnings"
+    elif DEAL.search(headline):
+        line1 = f"{symbol} M&A headline"
+        line2 = headline[:72] + ("…" if len(headline) > 72 else "")
+        impact = "high"
+        fmt = "BREAKING"
+        confidence = 0.86
+        category = "regulatory"
+    else:
+        return None
+
+    draft = f"{line1}\n{line2}\n\n${symbol}"
+    return draft, category, impact, fmt, confidence, line1
+
+
+def process_company_news() -> tuple[int, int]:
+    """Draft structured company news using Finnhub ticker field. Returns (ingested, drafts)."""
+    if not get_finnhub_key():
+        return 0, 0
+
+    watchlist = get_setting("watchlist", [])
+    symbols = watchlist or DEFAULT_FINNHUB_TICKERS
+    today = datetime.utcnow().date()
+    from_date = (today - timedelta(days=1)).isoformat()
+    to_date = today.isoformat()
+
+    ingested = 0
+    drafts_created = 0
+    seen_ids: set[int] = set()
+
+    for symbol in symbols[:15]:
+        if drafts_created >= MAX_COMPANY_NEWS_DRAFTS_PER_CYCLE:
+            break
+        symbol = symbol.upper().strip()
+        if not symbol or not _in_scope(symbol, watchlist):
+            continue
+
+        for item in _fetch_company_news(symbol, from_date, to_date)[:12]:
+            if drafts_created >= MAX_COMPANY_NEWS_DRAFTS_PER_CYCLE:
+                break
+
+            news_id = item.get("id")
+            if news_id is not None:
+                if news_id in seen_ids:
+                    continue
+                seen_ids.add(news_id)
+
+            headline = (item.get("headline") or "").strip()
+            url = (item.get("url") or "").strip()
+            summary = (item.get("summary") or "")[:500]
+            if not headline or not url:
+                continue
+
+            # Prefer explicit related ticker from API; fall back to query symbol
+            related = (item.get("related") or "").strip().upper()
+            ticker = symbol
+            if related:
+                first = related.split(",")[0].strip()
+                if first and re.fullmatch(r"[A-Z]{1,5}", first):
+                    ticker = first
+
+            built = _build_draft(ticker, headline, summary)
+            if not built:
+                continue
+
+            draft_text, category, impact, fmt, confidence, _line1 = built
+            chash = content_hash(COMPANY_NEWS_SOURCE, str(news_id or url), ticker)
+
+            if save_structured_draft(
+                source=COMPANY_NEWS_SOURCE,
+                url=url,
+                title=headline,
+                summary=summary,
+                draft_text=draft_text,
+                tickers=ticker,
+                category=category,
+                impact=impact,
+                fmt=fmt,
+                confidence=confidence,
+                chash=chash,
+                published_at=parse_finnhub_timestamp(item.get("datetime")),
+            ):
+                ingested += 1
+                drafts_created += 1
+
+    if drafts_created:
+        logger.info("Company news: created %d structured drafts", drafts_created)
+    return ingested, drafts_created

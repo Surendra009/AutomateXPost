@@ -396,6 +396,7 @@ function renderFinnhubStatus(fh) {
   };
   rows.push(fmt('News', fh.news));
   rows.push(fmt('Earnings', fh.earnings));
+  rows.push(fmt('Macro calendar', fh.macro));
   rows.push(fmt('Company news', fh.company_news));
   if (fh.error) {
     rows.push(`<div class="pipeline-error">${esc(fh.error)}</div>`);

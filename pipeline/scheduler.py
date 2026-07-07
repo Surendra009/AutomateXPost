@@ -6,13 +6,16 @@ from datetime import datetime
 from config import MAX_DRAFTS_PER_CYCLE, MAX_HEADLINES_PER_CYCLE, PIPELINE_INTERVAL_SECONDS
 from database import get_setting, set_setting
 from logging_config import setup_logging
+from pipeline.company_news import process_company_news
 from pipeline.draft import draft_posts
 from pipeline.earnings import process_earnings
 from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.filter import filter_headlines
 from pipeline.freshness import discard_stale_headlines
 from pipeline.ingest import get_unfiltered_headlines, ingest_headlines
+from pipeline.macro_calendar import process_macro_calendar
 from pipeline.prioritize import select_diverse_for_drafting, select_headlines_for_filter
+from pipeline.sec_filings import process_sec_filings
 from pipeline.stale import expire_stale_drafts
 
 logger = setup_logging()
@@ -49,6 +52,23 @@ def _active_news_sources() -> list[dict]:
         "type": "api",
         "enabled": fh_ok,
         "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
+    })
+    sources.append({
+        "name": "Finnhub Macro",
+        "type": "api",
+        "enabled": fh_ok,
+        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
+    })
+    sources.append({
+        "name": "Finnhub Company",
+        "type": "api",
+        "enabled": fh_ok,
+        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
+    })
+    sources.append({
+        "name": "SEC 8-K (structured)",
+        "type": "api",
+        "enabled": True,
     })
     sources.append({
         "name": "Finnhub (general + company)",
@@ -123,6 +143,24 @@ async def run_pipeline_cycle() -> dict:
             ingest_count += earnings_ingested
             ingest_by_source["Finnhub Earnings"] = earnings_ingested
         drafts_created = earnings_drafts
+
+        macro_ingested, macro_drafts = process_macro_calendar()
+        if macro_ingested:
+            ingest_count += macro_ingested
+            ingest_by_source["Finnhub Macro"] = macro_ingested
+        drafts_created += macro_drafts
+
+        sec_ingested, sec_drafts = process_sec_filings()
+        if sec_ingested:
+            ingest_count += sec_ingested
+            ingest_by_source["SEC 8-K (structured)"] = sec_ingested
+        drafts_created += sec_drafts
+
+        company_ingested, company_drafts = process_company_news()
+        if company_ingested:
+            ingest_count += company_ingested
+            ingest_by_source["Finnhub Company"] = company_ingested
+        drafts_created += company_drafts
 
         headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
         headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
