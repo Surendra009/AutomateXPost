@@ -63,16 +63,16 @@ async function checkAuth() {
 
 // ── Navigation ───────────────────────────────────────────
 
-document.querySelectorAll('.nav-btn').forEach((btn) => {
+document.querySelectorAll('.tab').forEach((btn) => {
   btn.addEventListener('click', () => {
     currentTab = btn.dataset.tab;
-    document.querySelectorAll('.nav-btn').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
-    document.querySelectorAll('.tab-screen').forEach((s) => s.classList.add('hidden'));
+    document.querySelectorAll('.page-section').forEach((s) => s.classList.add('hidden'));
     document.getElementById(`${currentTab}-screen`).classList.remove('hidden');
     const titles = { queue: 'Queue', history: 'History', settings: 'Settings' };
     const subtitles = {
-      queue: 'Pending drafts',
+      queue: 'Review pending drafts',
       history: 'Posted & rejected',
       settings: 'Pipeline & limits',
     };
@@ -114,14 +114,17 @@ async function loadQueue(silent = false) {
 function updateBadge(count) {
   const badge = document.getElementById('queue-badge');
   const navBadge = document.getElementById('nav-badge');
+  const sub = document.getElementById('header-subtitle');
   if (count > 0) {
     badge.textContent = count;
     badge.classList.remove('hidden');
     navBadge.textContent = count;
     navBadge.classList.remove('hidden');
+    if (currentTab === 'queue') sub.textContent = `${count} draft${count === 1 ? '' : 's'} waiting`;
   } else {
     badge.classList.add('hidden');
     navBadge.classList.add('hidden');
+    if (currentTab === 'queue') sub.textContent = 'Review pending drafts';
   }
 }
 
@@ -141,65 +144,58 @@ function renderQueue(drafts) {
 function renderDraftCard(d) {
   const confPct = Math.round(d.confidence * 100);
   const isEditing = editingDraftId === d.id;
-  const formatClass = (d.format || 'CONTEXT').toLowerCase();
-  const sourceLink = d.headline
+  const fmt = (d.format || 'CONTEXT').toLowerCase();
+  const textClass = fmt === 'breaking' ? 'is-breaking' : fmt === 'summary' ? 'is-summary' : '';
+  const source = d.headline
     ? `<a href="${esc(d.headline.url)}" target="_blank" rel="noopener">${esc(d.headline.source)}</a>`
-    : '';
+    : 'Unknown source';
 
-  const tickerTags = d.tickers.length
-    ? d.tickers.map((t) => `<span class="tag tag-ticker">$${esc(t)}</span>`).join('')
-    : '';
+  const tags = [
+    `<span class="tag tag-fmt-${fmt}">${esc(d.format)}</span>`,
+    `<span class="tag tag-${esc(d.impact)}">${esc(d.impact)}</span>`,
+    `<span class="tag">${esc(d.category)}</span>`,
+    ...d.tickers.map((t) => `<span class="tag tag-ticker">$${esc(t)}</span>`),
+  ].join('');
 
-  let actions;
+  let body;
   if (isEditing) {
-    actions = `
-      <textarea class="edit-area" id="edit-${d.id}" maxlength="500">${esc(d.text)}</textarea>
-      <div class="char-counter" id="counter-${d.id}">${d.text.length}/280</div>
-      <div class="card-actions editing">
-        <button class="btn btn-success" data-action="approve-edit" data-id="${d.id}">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
-          Approve
-        </button>
-        <button class="btn btn-secondary" data-action="cancel-edit" data-id="${d.id}">Cancel</button>
+    body = `
+      <div class="post-foot">
+        <textarea class="edit-box" id="edit-${d.id}" maxlength="500">${esc(d.text)}</textarea>
+        <div class="char-count" id="counter-${d.id}">${d.text.length}/280</div>
+        <div class="post-actions">
+          <button class="btn btn-approve btn-block" data-action="approve-edit" data-id="${d.id}">Approve edit</button>
+          <button class="btn btn-secondary btn-block" data-action="cancel-edit" data-id="${d.id}">Cancel</button>
+        </div>
       </div>`;
   } else {
-    actions = `
-      <div class="card-actions">
-        <button class="btn btn-success" data-action="approve" data-id="${d.id}">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
-          Approve
-        </button>
-        <button class="btn btn-danger" data-action="reject" data-id="${d.id}">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
-          Reject
-        </button>
-        <button class="btn btn-edit" data-action="edit" data-id="${d.id}" aria-label="Edit">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-        </button>
+    body = `
+      <div class="post-body">
+        <div class="post-text ${textClass}">${esc(d.text)}</div>
+      </div>
+      <div class="post-foot">
+        <div class="post-tags">${tags}</div>
+        <div class="post-meta">
+          <div class="conf-track"><div class="conf-fill" style="width:${confPct}%"></div></div>
+          <span>${confPct}% confidence</span>
+        </div>
+        <div class="post-actions">
+          <button class="btn btn-approve btn-block" data-action="approve" data-id="${d.id}">Approve &amp; post</button>
+          <div class="post-actions-row">
+            <button class="btn btn-reject" data-action="reject" data-id="${d.id}">Reject</button>
+            <button class="btn btn-edit" data-action="edit" data-id="${d.id}">Edit</button>
+          </div>
+        </div>
       </div>`;
   }
 
   return `
-    <article class="draft-card impact-${esc(d.impact)}" data-id="${d.id}">
-      <div class="draft-top">
-        <div class="draft-meta">
-          <span class="tag tag-format tag-format-${formatClass}">${esc(d.format)}</span>
-          <span class="tag tag-impact-${esc(d.impact)}">${esc(d.impact)}</span>
-          <span class="tag tag-category">${esc(d.category)}</span>
-          ${tickerTags}
-        </div>
-        <span class="draft-age">${esc(d.age)}</span>
+    <article class="post-card" data-id="${d.id}" data-impact="${esc(d.impact)}">
+      <div class="post-head">
+        <span class="post-source">${source}</span>
+        <span class="post-age">${esc(d.age)}</span>
       </div>
-      ${isEditing ? '' : `<div class="draft-text format-${formatClass}">${esc(d.text)}</div>`}
-      ${sourceLink ? `<div class="draft-source">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6M10 14L21 3"/></svg>
-        ${sourceLink}
-      </div>` : ''}
-      <div class="confidence-row">
-        <div class="confidence-bar"><div class="confidence-fill" style="width:${confPct}%"></div></div>
-        <span class="confidence-label">${confPct}%</span>
-      </div>
-      ${actions}
+      ${body}
     </article>`;
 }
 
@@ -207,7 +203,7 @@ function attachCardListeners() {
   document.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', handleCardAction);
   });
-  document.querySelectorAll('.edit-area').forEach((ta) => {
+  document.querySelectorAll('.edit-box').forEach((ta) => {
     ta.addEventListener('input', () => {
       const id = ta.id.replace('edit-', '');
       const counter = document.getElementById(`counter-${id}`);
@@ -308,22 +304,19 @@ function renderHistory(data) {
   const pct = Math.min(100, Math.round((posted / cap) * 100));
 
   document.getElementById('stats-value').textContent = `${posted} / ${cap}`;
-  document.getElementById('stats-ring').style.setProperty('--progress', `${pct}%`);
+  document.getElementById('stats-bar').style.width = `${pct}%`;
 
   const postedList = document.getElementById('posted-list');
   const postedEmpty = document.getElementById('posted-empty');
   if (data.posted.length) {
     postedEmpty.classList.add('hidden');
     postedList.innerHTML = data.posted.map((p) => `
-      <div class="history-card">
-        <div class="draft-text">${esc(p.text)}</div>
-        <div class="history-footer">
-          <span class="history-time">${formatDate(p.posted_at)}</span>
+      <div class="list-item">
+        <p>${esc(p.text)}</p>
+        <div class="list-item-foot">
+          <span>${formatDate(p.posted_at)}</span>
           ${p.tweet_url
-            ? `<a class="history-link" href="${esc(p.tweet_url)}" target="_blank" rel="noopener">
-                View on X
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6M10 14L21 3"/></svg>
-              </a>`
+            ? `<a href="${esc(p.tweet_url)}" target="_blank" rel="noopener">View on X</a>`
             : '<span class="muted">Dry run</span>'}
         </div>
       </div>`).join('');
@@ -335,9 +328,9 @@ function renderHistory(data) {
   document.getElementById('rejected-count').textContent = data.rejected.length;
   const rejectedList = document.getElementById('rejected-list');
   rejectedList.innerHTML = data.rejected.map((r) => `
-    <div class="rejected-card">
-      <div class="draft-text">${esc(r.text)}</div>
-      <div class="history-time">${formatDate(r.created_at)}</div>
+    <div class="list-item muted-item">
+      <p>${esc(r.text)}</p>
+      <div class="list-item-foot"><span>${formatDate(r.created_at)}</span></div>
     </div>`).join('');
 }
 
@@ -376,9 +369,9 @@ async function loadSettings() {
       { label: 'Finnhub', on: cfg.finnhub_configured },
     ];
     document.getElementById('config-info').innerHTML = items.map((i) => `
-      <div class="status-pill">
-        <span class="status-dot ${i.on ? 'on' : 'off'}"></span>
-        ${esc(i.label)}
+      <div class="status-row">
+        <span>${esc(i.label)}</span>
+        <span class="${i.on ? 'status-ok' : 'status-no'}">${i.on ? 'On' : 'Off'}</span>
       </div>`).join('');
   } catch (err) {
     showToast(err.message, 'error');
