@@ -7,6 +7,7 @@ from config import MAX_DRAFTS_PER_CYCLE, MAX_HEADLINES_PER_CYCLE, PIPELINE_INTER
 from database import get_setting, set_setting
 from logging_config import setup_logging
 from pipeline.draft import draft_posts
+from pipeline.earnings import process_earnings
 from pipeline.filter import filter_headlines
 from pipeline.freshness import discard_stale_headlines
 from pipeline.ingest import get_unfiltered_headlines, ingest_headlines
@@ -38,6 +39,12 @@ def _active_news_sources() -> list[dict]:
     sources = [{"name": name, "type": "rss", "enabled": True} for name, _ in RSS_FEEDS]
     sources.extend({"name": name, "type": "ai", "enabled": True} for name, _ in AI_RSS_FEEDS)
     sources.append({"name": SEC_EDGAR_8K_FEED[0], "type": "rss", "enabled": True})
+    sources.append({
+        "name": "Finnhub Earnings",
+        "type": "api",
+        "enabled": bool(FINNHUB_KEY),
+        "hint": None if FINNHUB_KEY else "Requires FINNHUB_KEY",
+    })
     sources.append({
         "name": "Finnhub (general + company)",
         "type": "api",
@@ -97,12 +104,18 @@ async def run_pipeline_cycle() -> dict:
         expired = expire_stale_drafts()
         discarded = discard_stale_headlines()
         ingest_count, ingest_by_source = ingest_headlines()
+        earnings_ingested, earnings_drafts = process_earnings()
+        if earnings_ingested:
+            ingest_count += earnings_ingested
+            ingest_by_source["Finnhub Earnings"] = earnings_ingested
+        drafts_created = earnings_drafts
+
         headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE)
         if headlines:
             filtered = filter_headlines(headlines)
             filtered = filtered[: MAX_DRAFTS_PER_CYCLE * 2]
             if filtered:
-                drafts_created = draft_posts(filtered)
+                drafts_created += draft_posts(filtered)
 
         _save_cycle_stats(
             ingest_count=ingest_count,

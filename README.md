@@ -203,6 +203,15 @@ The old Reuters RSS feed is broken. Until the latest deploy, only CNBC was relia
 Finnhub provides:
 - **General market news** — broad financial headlines
 - **Company news** — when you add tickers to your **Watchlist** (e.g. `NVDA`, `TSLA`), Finnhub pulls ticker-specific stories
+- **Earnings calendar** — before-market (BMO) and after-market (AMC) previews with EPS/revenue estimates, plus actual results vs estimates when reported
+
+### Earnings drafts
+
+Each pipeline run checks Finnhub's earnings calendar for today and yesterday:
+- **Preview** (before results): `NVDA reports AMC today` with EPS and revenue estimates
+- **Results** (after report): beat/miss vs estimates with actual numbers
+
+Without a watchlist, earnings are tracked for major names (AAPL, MSFT, NVDA, META, etc.). Add tickers to your **Watchlist** to focus on specific companies.
 
 ### Watchlist for ticker-focused news
 

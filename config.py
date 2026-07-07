@@ -26,6 +26,7 @@ DRAFT_MODEL = "claude-sonnet-4-6"
 PIPELINE_INTERVAL_SECONDS = 300  # 5 min
 MAX_HEADLINES_PER_CYCLE = 20
 MAX_DRAFTS_PER_CYCLE = 2
+MAX_EARNINGS_DRAFTS_PER_CYCLE = 5
 MIN_RELEVANCE_SCORE = 0.75
 MIN_AI_RELEVANCE_SCORE = 0.72  # slightly lower bar for major AI product news
 STALE_DRAFT_HOURS = 4  # pending drafts older than this are auto-removed
