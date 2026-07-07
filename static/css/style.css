@@ -370,7 +370,7 @@ body {
 
 .edit-box {
   width: 100%;
-  min-height: 120px;
+  min-height: 140px;
   padding: 14px;
   margin-bottom: 6px;
   border: 1px solid var(--line);
@@ -380,6 +380,7 @@ body {
   font: inherit;
   font-size: 17px;
   line-height: 1.5;
+  white-space: pre-wrap;
   resize: vertical;
 }
 
@@ -503,6 +504,7 @@ body {
   font-size: 15px;
   line-height: 1.45;
   margin-bottom: 8px;
+  white-space: pre-line;
 }
 
 .list-item-foot {
