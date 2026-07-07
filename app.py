@@ -44,6 +44,11 @@ async def manifest():
     return FileResponse(STATIC_DIR / "manifest.json", media_type="application/manifest+json")
 
 
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.get("/sw.js")
 async def service_worker():
     return FileResponse(

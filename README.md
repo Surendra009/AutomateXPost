@@ -119,18 +119,21 @@ docker run -d \
 
 ### Railway
 
-> **Important:** Deploy from a branch that contains the full PostPilot code (e.g. merge [PR #1](https://github.com/Surendra009/AutomateXPost/pull/1) into `main` first). The `main` branch only has a placeholder README until the PR is merged — deploying `main` will fail.
+> **Critical:** Railway deploys the `main` branch by default. The PostPilot code must be on `main` — if `main` only has a placeholder README, Railpack will exit with an error because there is no Python app to detect.
 
 #### Step-by-step
 
-1. **Merge the PostPilot PR** into `main` (or set Railway's deploy branch to `cursor/postpilot-standalone-e611`)
+1. **Ensure `main` has the full codebase** — merge [PR #1](https://github.com/Surendra009/AutomateXPost/pull/1) into `main`, or set Railway's deploy branch to `cursor/postpilot-standalone-e611`
 
 2. **New Project** → **Deploy from GitHub repo** → select `AutomateXPost`
 
-3. Railway auto-detects the `Dockerfile` (also configured in `railway.toml`). No custom start command needed — leave **Start Command** blank in service settings so Railway uses `./start.sh` from the Dockerfile.
+3. **Builder settings** (service → **Settings** → **Build**):
+   - Preferred: **Dockerfile** (auto-detected; also set in `railway.json`)
+   - If Railway uses **Railpack** instead, that's fine too — `railpack.json` and `Procfile` tell it to run `uvicorn app:app`
+   - Leave dashboard **Start Command** blank unless Railpack keeps failing — then set: `./start.sh`
 
 4. **Add a Volume** (required for SQLite persistence):
-   - Go to your service → **Volumes** → **Add Volume**
+   - Service → **Volumes** → **Add Volume**
    - Mount path: `/data`
 
 5. **Set environment variables** (service → **Variables**):
@@ -145,19 +148,21 @@ docker run -d \
 
    Add `ANTHROPIC_API_KEY` and X API keys when ready.
 
-6. **Do NOT set `PORT`** — Railway injects it automatically at runtime. Setting it manually causes deploy failures.
+6. **Do NOT set `PORT`** — Railway injects it automatically. Setting it manually causes deploy failures.
 
-7. **Deploy** — Railway provides HTTPS automatically. Open the generated URL and sign in with `APP_PASSWORD`.
+7. **Redeploy** — open the Railway URL and sign in with `APP_PASSWORD`.
 
 #### Railway troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| Build fails immediately | Ensure deploy branch has the full codebase (not empty `main`) |
-| `$PORT is not a valid port number` | Remove any custom Start Command; don't set `PORT` in variables |
-| App builds but won't respond | Check logs; confirm Start Command is blank and volume is at `/data` |
-| Login doesn't stick | Railway uses HTTPS — cookies are set with `secure=True` automatically |
-| Data lost on redeploy | Add a volume mounted at `/data` with `DATABASE_URL=sqlite:////data/postpilot.db` |
+| **Railpack exited with an error** | `main` branch is empty — merge the PR so `app.py` and `requirements.txt` exist |
+| Railpack: "No start command found" | Set Start Command to `./start.sh` or `uvicorn app:app --host 0.0.0.0 --port $PORT` |
+| Railpack ignores Dockerfile | `railway.json` sets `builder: DOCKERFILE`; redeploy after merge |
+| `$PORT is not a valid port number` | Remove `PORT` from variables; clear custom Start Command |
+| App builds but won't respond | Add volume at `/data`; check deploy logs |
+| Login doesn't stick | Railway uses HTTPS — secure cookies enabled automatically |
+| Data lost on redeploy | Volume at `/data` + `DATABASE_URL=sqlite:////data/postpilot.db` |
 
 ### Render
 
