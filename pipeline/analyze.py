@@ -1,4 +1,4 @@
-"""Analyze headlines for non-obvious trading insights before drafting."""
+"""Analyze headlines — distill to one simple hook for X."""
 
 import json
 
@@ -9,34 +9,27 @@ from pipeline.filter import _call_claude, _parse_json_array
 
 logger = setup_logging()
 
-ANALYZE_SYSTEM_PROMPT = """You are a senior markets editor preparing briefs for an X account read by professional traders.
+ANALYZE_SYSTEM_PROMPT = """You prepare ultra-short briefs for someone posting market news on X (Twitter).
 
-Your job: find what adds value BEYOND the headline. Traders already saw the headline — they need the "so what."
-
-Extract only from the provided source material. Never invent numbers or quotes.
+Pick ONE thing worth saying. Simple words. No jargon dump.
 
 Return JSON:
 {
   "publish": true|false,
-  "skip_reason": "why not publishable if publish is false",
+  "skip_reason": "if false",
   "suggested_format": "BREAKING"|"CONTEXT"|"SUMMARY",
-  "tickers": ["NVDA"],
-  "lead_fact": "the single most important concrete fact (preferably with a number)",
-  "vs_expectations": "how this compares to consensus/forecast/prior — null if unknown",
-  "significance": "why this size/timing/detail matters (historical, sector, macro link)",
-  "read_through": "which other tickers/sectors affected and how — null if none",
-  "caveat": "uncertainty, 'reportedly', pending confirmation — null if none",
-  "what_to_watch": "next data point, vote, earnings, deadline — null if none"
+  "tickers": ["RIVN"],
+  "hook": "What happened — one plain sentence, max 15 words",
+  "why_it_matters": "Why traders care — one plain sentence, max 15 words. null if obvious from hook",
+  "one_number": "the single most important number to include, or null"
 }
 
-Set publish=false when:
-- The source is too thin to say anything beyond restating the headline
-- It's pure opinion/PR with no tradeable fact
-- You cannot identify at least ONE of: vs_expectations, significance, read_through
-- A busy trader would scroll past this — not worth posting
-- No specific numbers, tickers, or concrete market mechanism
-
-Set publish=true only when a professional trader would stop scrolling. Default publish=false."""
+Rules:
+- hook = the news in everyday language ("Rivian sold shares to raise cash")
+- why_it_matters = the reaction or surprise ("stock fell on dilution fears")
+- Do NOT pack in extra stats, guidance ranges, or secondary facts
+- publish=false if you can't explain it simply in those two sentences
+- Default publish=false"""
 
 
 def analyze_headline(
@@ -44,25 +37,16 @@ def analyze_headline(
     classification: dict,
     article_text: str,
 ) -> dict | None:
-    """Return analysis dict or None if unparseable."""
     parts = [
         f"Headline: {headline.title}",
         f"Source: {headline.source}",
-        f"URL: {headline.url}",
     ]
     if headline.summary:
-        parts.append(f"RSS summary: {headline.summary[:500]}")
+        parts.append(f"Summary: {headline.summary[:500]}")
     if article_text:
-        parts.append(f"Article excerpt:\n{article_text[:3500]}")
-    else:
-        parts.append("(No article body fetched — rely on RSS summary only, be conservative)")
+        parts.append(f"Article:\n{article_text[:2500]}")
 
-    parts.append(f"Filter angle: {classification.get('angle', '')}")
-    key_facts = classification.get("key_facts", [])
-    if key_facts:
-        parts.append("Key facts from filter: " + "; ".join(key_facts))
-
-    raw = _call_claude(ANALYZE_SYSTEM_PROMPT, "\n\n".join(parts), FILTER_MODEL, max_tokens=800)
+    raw = _call_claude(ANALYZE_SYSTEM_PROMPT, "\n\n".join(parts), FILTER_MODEL, max_tokens=500)
     if not raw:
         return None
 
