@@ -18,6 +18,7 @@ from database import get_all_settings, get_session, get_setting, set_setting
 from logging_config import setup_logging
 from models import Draft, Headline, Post
 from pipeline.post import PostingError, get_today_stats, publish_draft
+from pipeline.feedback import record_rejection
 from pipeline.freshness import discard_stale_headlines, format_age, age_minutes, is_fresh
 from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
@@ -149,6 +150,8 @@ def reject_draft(draft_id: int, request: Request):
         draft.status = "rejected"
         session.add(draft)
         session.commit()
+
+    record_rejection(draft_id)
     return {"ok": True}
 
 

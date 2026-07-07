@@ -9,6 +9,7 @@ from logging_config import setup_logging
 from pipeline.company_news import process_company_news
 from pipeline.draft import draft_posts
 from pipeline.earnings import process_earnings
+from pipeline.feedback import feedback_stats
 from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.filter import filter_headlines
 from pipeline.freshness import discard_stale_headlines
@@ -36,6 +37,7 @@ def get_pipeline_status() -> dict:
         "last_ingest_by_source": get_setting("pipeline_last_ingest_by_source", {}),
         "news_sources": _active_news_sources(),
         "finnhub": get_finnhub_status(),
+        "feedback": feedback_stats(),
     }
 
 

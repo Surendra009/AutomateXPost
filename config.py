@@ -50,6 +50,8 @@ MAX_NEWS_AGE_HOURS = 4  # ignore headlines published before this window
 MIN_SUMMARY_CHARS_FOR_SKIP_FETCH = 100  # skip full article fetch when RSS summary is enough
 ARTICLE_FETCH_CATEGORIES = frozenset({"earnings", "macro"})  # always fetch article for these
 DRAFT_DEDUP_HOURS = 24  # skip LLM if same story was drafted within this window
+REJECTION_LEARN_THRESHOLD = 2  # rejects before a title shape is treated as noise
+REJECTION_FUZZY_THRESHOLD = 88  # fuzzy match against learned rejected titles
 
 # Market news RSS feeds (Reuters feed is deprecated/broken — use alternatives below)
 RSS_FEEDS = [

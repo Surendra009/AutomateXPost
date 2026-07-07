@@ -19,6 +19,9 @@ def init_db() -> None:
             if not existing:
                 session.add(AppSetting(key=key, value=json.dumps(value)))
         session.commit()
+    from pipeline.feedback import backfill_from_rejected_drafts
+
+    backfill_from_rejected_drafts()
 
 
 @contextmanager

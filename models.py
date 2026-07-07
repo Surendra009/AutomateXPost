@@ -41,6 +41,16 @@ class Post(SQLModel, table=True):
     posted_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class RejectionFeedback(SQLModel, table=True):
+    __tablename__ = "rejection_feedback"
+
+    normalized_title: str = Field(primary_key=True)
+    title_sample: str = ""
+    reject_count: int = 1
+    pattern: str | None = None  # optional regex learned from repeated rejects
+    last_rejected_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class AppSetting(SQLModel, table=True):
     __tablename__ = "settings"
 

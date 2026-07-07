@@ -467,6 +467,7 @@ async function loadSettings() {
         <span>${pipe.last_drafts_created ?? 0}</span>
       </div>
       ${pipe.last_expired ? `<div class="status-row"><span>Expired stale</span><span>${pipe.last_expired}</span></div>` : ''}
+      ${(pipe.feedback?.learned_patterns ?? 0) > 0 ? `<div class="status-row"><span>Learned noise</span><span>${pipe.feedback.learned_patterns} patterns</span></div>` : ''}
       ${err}`;
 
     renderFinnhubStatus(pipe.finnhub || data.finnhub);
