@@ -294,21 +294,11 @@ body {
 
 .post-text {
   font-size: 18px;
-  line-height: 1.55;
+  line-height: 1.5;
   font-weight: 400;
   letter-spacing: -0.01em;
   word-break: break-word;
-}
-
-.post-text.is-breaking,
-.post-text.is-context {
-  /* Same as default — reads like a normal X post */
-}
-
-.post-text.is-summary {
-  font-size: 17px;
   white-space: pre-line;
-  line-height: 1.5;
 }
 
 .post-foot {

@@ -1,4 +1,4 @@
-"""LLM draft step — short, human X posts."""
+"""LLM draft step — formatted multi-line X posts."""
 
 import json
 import re
@@ -14,50 +14,105 @@ from pipeline.filter import _call_claude, _parse_json_array
 
 logger = setup_logging()
 
-MAX_CHARS = {"BREAKING": 200, "CONTEXT": 220, "SUMMARY": 320}
+MAX_CHARS = {"BREAKING": 260, "CONTEXT": 280, "SUMMARY": 380}
 
-DRAFT_SYSTEM_PROMPT = """You write short X posts about market news. Sound like a real person typing a quick take — not a news wire, not a Bloomberg terminal, not a headline.
+DRAFT_SYSTEM_PROMPT = """You write formatted X posts about market news. Use line breaks so it's easy to scan on a phone — not one dense sentence, not a wire headline.
 
-## Voice
-- Simple everyday words. Write like you're texting a trader friend.
-- Sentence case only. Never ALL CAPS (except ticker symbols like $NVDA).
-- 1-2 short sentences for BREAKING and CONTEXT. 2-3 max for SUMMARY.
-- One idea. One number max (the one that matters most).
-- No emojis, no hashtags. Put $TICKER at the end.
+## Layout (use \\n for line breaks)
 
-## Do NOT
-- Dump stats, guidance ranges, or every detail from the article
-- Use wire-service phrasing: "signals", "cushion", "read-through", "intraday", "street consensus"
-- Chain clauses with colons and dashes
-- Sound like CNBC chyron text
+BREAKING & CONTEXT — 3-4 lines:
+```
+What happened (short line)
 
-## Good examples
-BREAKING: "Rivian sold 75M shares at ~$20 to raise $1.5B. Stock down ~15% on dilution. $RIVN"
-CONTEXT: "Fed held rates but penciled in two cuts for 2026, up from one. A bit more dovish than expected. $SPY"
-SUMMARY: "Nvidia beat earnings — $22.1B revenue vs $20.4B expected, mostly data center.\n\nBig beat but everyone already expected AI demand. $NVDA"
+Why it matters or market reaction (short line)
 
-## Bad example (never write like this)
-"$RIVN SOLD 75M SHARES AT ~$20.14 TO RAISE $1.51B — DILUTION HIT HARD: STOCK DOWN ~15% INTRADAY. THE CUSHION: Q2 GUIDANCE $1.55–$1.65B BEAT..."
+$TICKER
+```
+
+SUMMARY — 4-5 lines:
+```
+What happened (short line)
+
+One line of context — why traders care
+
+$TICKER
+```
+
+## Rules
+- Sentence case. Never ALL CAPS (except $TICKERS).
+- Simple words. No jargon dumps.
+- Max 2 numbers total across the whole post.
+- No emojis, no hashtags.
+- Each line should be short (under ~70 characters).
+- Blank line before tickers is optional but looks good.
+- Tickers always on the last line.
+
+## Good example
+```
+Rivian sold 75M shares at ~$20
+Raising $1.5B — stock down ~15% on dilution
+
+$RIVN
+```
+
+## Bad (never)
+- One long run-on sentence
+- ALL CAPS wire text
+- Packing in guidance ranges, multiple stats, "street consensus"
 
 Return JSON: {"skip": false, "format": "BREAKING"|"CONTEXT"|"SUMMARY", "text": "...", "confidence": 0.0-1.0}
-If you can't keep it short and human, return {"skip": true, "reason": "..."}"""
+Use \\n in the text string for line breaks."""
 
 
 def _build_draft_prompt(headline: Headline, classification: dict, analysis: dict) -> str:
     tickers = analysis.get("tickers") or classification.get("tickers", [])
     fmt = analysis.get("suggested_format", "CONTEXT")
-    char_limit = MAX_CHARS.get(fmt, 220)
+    char_limit = MAX_CHARS.get(fmt, 280)
+    ticker_str = " ".join(f"${t}" for t in tickers) if tickers else ""
 
     return (
         f"Headline (don't copy): {headline.title}\n\n"
-        f"What happened: {analysis.get('hook', '')}\n"
-        f"Why it matters: {analysis.get('why_it_matters') or 'n/a'}\n"
-        f"Key number (use at most this one): {analysis.get('one_number') or 'pick one if needed'}\n"
-        f"Tickers: {', '.join(tickers) if tickers else 'none'}\n"
+        f"Line 1 idea (what happened): {analysis.get('hook', '')}\n"
+        f"Line 2 idea (why it matters): {analysis.get('why_it_matters') or 'n/a'}\n"
+        f"Key number (max one): {analysis.get('one_number') or 'optional'}\n"
+        f"Tickers for last line: {ticker_str or 'none'}\n"
         f"Format: {fmt}\n"
-        f"Max length: {char_limit} characters\n\n"
-        "Write one short X post. Return JSON."
+        f"Max {char_limit} chars total\n\n"
+        "Write a formatted multi-line post. Return JSON."
     )
+
+
+def _normalize_post(text: str, tickers: list[str]) -> str:
+    """Clean up line breaks and ensure tickers on final line."""
+    text = text.replace("\\n", "\n").strip()
+    lines = [ln.strip() for ln in text.split("\n")]
+
+    # Remove empty lines except keep single blanks between blocks
+    cleaned: list[str] = []
+    for ln in lines:
+        if not ln:
+            if cleaned and cleaned[-1] != "":
+                cleaned.append("")
+            continue
+        cleaned.append(ln)
+
+    # Strip ticker lines from body — we'll re-add at end
+    body_lines = []
+    ticker_pattern = re.compile(r"^\$[A-Z]{1,5}$")
+    for ln in cleaned:
+        if ticker_pattern.match(ln.replace(" ", "")) and len(ln.split()) <= 3:
+            continue
+        body_lines.append(ln)
+
+    while body_lines and body_lines[-1] == "":
+        body_lines.pop()
+
+    if tickers:
+        ticker_line = " ".join(f"${t.upper()}" for t in tickers)
+        body_lines.append("")
+        body_lines.append(ticker_line)
+
+    return "\n".join(body_lines).strip()
 
 
 def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
@@ -80,8 +135,9 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
             _discard_headline(headline, analysis.get("skip_reason", "insufficient insight"))
             continue
 
+        tickers = analysis.get("tickers") or classification.get("tickers", [])
         prompt = _build_draft_prompt(headline, classification, analysis)
-        raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=400)
+        raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=500)
         if not raw:
             continue
 
@@ -101,8 +157,8 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
             _discard_headline(headline, draft_data.get("reason", "drafter skip"))
             continue
 
-        text = draft_data.get("text", "").strip()
         fmt = draft_data.get("format", analysis.get("suggested_format", "CONTEXT"))
+        text = _normalize_post(draft_data.get("text", "").strip(), tickers)
 
         if not text or not _passes_style_check(text, fmt):
             logger.info("Style check failed for headline %s", headline.id)
@@ -113,7 +169,6 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
             _discard_headline(headline, "headline echo")
             continue
 
-        tickers = analysis.get("tickers") or classification.get("tickers", [])
         with get_session() as session:
             draft = Draft(
                 headline_id=headline.id,
@@ -139,32 +194,35 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
 
 
 def _passes_style_check(text: str, fmt: str) -> bool:
-    """Reject wire-service tone, caps lock, stat dumps."""
-    limit = MAX_CHARS.get(fmt, 220)
-    if len(text) > limit + 60:  # small buffer for SUMMARY newlines
+    limit = MAX_CHARS.get(fmt, 280)
+    if len(text) > limit + 40:
         return False
 
-    # Too much ALL CAPS (excluding tickers)
     letters = [c for c in text if c.isalpha()]
-    if letters:
-        upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
-        if upper_ratio > 0.35:
-            return False
+    if letters and sum(1 for c in letters if c.isupper()) / len(letters) > 0.35:
+        return False
 
-    # Too many numbers / dollar amounts = stat dump
     dollar_count = len(re.findall(r"(?:~)?\$[\d,.]+[BMK]?", text))
     pct_count = len(re.findall(r"\d+\.?\d*%", text))
     if dollar_count > 2 or (dollar_count + pct_count) > 3:
         return False
 
-    # Too many sentences (ignore trailing ticker cashtag)
-    body = re.sub(r"\s*\$[A-Z]{1,5}(?:\s+\$[A-Z]{1,5})*\s*$", "", text).strip()
-    sentences = [s for s in re.split(r"[.!?]+\s+", body) if s]
-    max_sentences = 3 if fmt == "SUMMARY" else 2
-    if len(sentences) > max_sentences:
+    lines = [ln for ln in text.split("\n") if ln.strip()]
+    if len(lines) < 2:
         return False
 
-    # Wire-service red flags
+    # Long single-line posts without formatting
+    if "\n" not in text and len(text) > 100:
+        return False
+
+    # No line should be a paragraph
+    for ln in lines:
+        if len(ln) > 100:
+            return False
+
+    if len(lines) > 6:
+        return False
+
     jargon = re.compile(
         r"\b(intraday|street consensus|read-through|signals capital|the cushion|"
         r"year-over-year|yoy|sequentially|guidance range|underwriters hold)\b",
@@ -188,6 +246,6 @@ def _discard_headline(headline: Headline, reason: str) -> None:
 def _is_headline_echo(text: str, title: str) -> bool:
     from rapidfuzz import fuzz
 
-    normalized_text = " ".join(text.lower().split())[:120]
+    flat = " ".join(text.lower().split())[:120]
     normalized_title = " ".join(title.lower().split())
-    return fuzz.ratio(normalized_text, normalized_title) > 75
+    return fuzz.ratio(flat, normalized_title) > 75
