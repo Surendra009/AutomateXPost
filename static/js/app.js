@@ -451,9 +451,16 @@ async function loadSettings() {
 
     const lastRun = pipe.last_run_at ? formatDate(pipe.last_run_at) : 'Never';
     const sched = pipe.schedule || {};
-    const schedLabel = sched.quiet_hours
-      ? `Quiet (${sched.quiet_window || '10pm–5am'})`
-      : (sched.next_mode === 'catchup' ? 'Catch-up at 5am' : 'Active (6am–10pm)');
+    let schedLabel;
+    if (sched.quiet_hours) {
+      schedLabel = `Quiet (${sched.quiet_window || '10pm–5am'})`;
+    } else if (sched.is_weekend) {
+      schedLabel = `Weekend (every ${sched.weekend_interval_hours || 3}h)`;
+    } else if (sched.next_mode === 'catchup') {
+      schedLabel = 'Catch-up at 5am';
+    } else {
+      schedLabel = 'Active (6am–10pm)';
+    }
     const err = pipe.last_error ? `<div class="pipeline-error">${esc(pipe.last_error)}</div>` : '';
     document.getElementById('pipeline-status').innerHTML = `
       <div class="status-row">
