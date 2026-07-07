@@ -1,4 +1,4 @@
-const CACHE_NAME = 'postpilot-v3';
+const CACHE_NAME = 'postpilot-v4';
 const SHELL = ['/', '/static/css/style.css', '/static/js/app.js', '/manifest.json'];
 
 self.addEventListener('install', (e) => {
