@@ -1,7 +1,5 @@
 """Skip LLM drafting when the same story was recently drafted."""
 
-import hashlib
-import re
 from datetime import datetime, timedelta
 
 from sqlmodel import select
@@ -10,18 +8,10 @@ from config import DRAFT_DEDUP_HOURS
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
-
-logger = setup_logging()
+from pipeline.story_key import story_fingerprint
 
 # Statuses that mean we already handled this story
 _DEDUP_STATUSES = ("pending", "posted", "approved", "rejected", "stale")
-
-
-def story_fingerprint(title: str, source: str) -> str:
-    """Stable key from normalized title + source (same story, different URLs)."""
-    normalized = re.sub(r"\s+", " ", title.strip().lower())
-    raw = f"{source.strip().lower()}|{normalized}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
 def was_recently_drafted(title: str, source: str, hours: int | None = None) -> bool:

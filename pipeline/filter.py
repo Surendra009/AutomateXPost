@@ -10,6 +10,7 @@ from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Headline
 from pipeline.ai_news import enrich_ai_classification, is_ai_source, is_material_ai_update
+from pipeline.classify_cache import cache_classification, get_cached_classification, prune_classification_cache
 from pipeline.freshness import is_fresh
 from pipeline.noise import is_obvious_noise
 from pipeline.prioritize import composite_score
@@ -186,8 +187,30 @@ def _discard_headline(headline: Headline, reason: str) -> None:
             session.commit()
 
 
+def _apply_classification(
+    headline: Headline,
+    classification: dict[str, Any],
+    watchlist: list[str],
+    results: list[tuple[Headline, dict]],
+) -> None:
+    """Run hard filter and mark headline filtered or discarded."""
+    classification = enrich_ai_classification(classification, headline)
+
+    if not _passes_hard_filter(classification, watchlist, headline):
+        _discard_headline(headline, "failed hard filter")
+        return
+
+    results.append((headline, classification))
+    with get_session() as session:
+        row = session.get(Headline, headline.id)
+        if row:
+            row.status = "filtered"
+            session.add(row)
+            session.commit()
+
+
 def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
-    """Filter headlines via pre-check + Claude Haiku. Returns (headline, classification) pairs."""
+    """Filter headlines via pre-check + cache + Claude Haiku. Returns (headline, classification) pairs."""
     if not headlines:
         return []
 
@@ -210,8 +233,18 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
         logger.info("All headlines removed by pre-filter")
         return []
 
-    for batch_start in range(0, len(candidates), 10):
-        batch = candidates[batch_start : batch_start + 10]
+    cache_hits = 0
+    need_llm: list[Headline] = []
+    for h in candidates:
+        cached = get_cached_classification(h.title, h.source)
+        if cached is not None:
+            cache_hits += 1
+            _apply_classification(h, cached, watchlist, results)
+        else:
+            need_llm.append(h)
+
+    for batch_start in range(0, len(need_llm), 10):
+        batch = need_llm[batch_start : batch_start + 10]
         prompt = _build_batch_prompt(batch, watchlist)
         raw = _call_claude(FILTER_SYSTEM_PROMPT, prompt, FILTER_MODEL)
         if not raw:
@@ -226,27 +259,20 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
             if i >= len(parsed):
                 break
             classification: dict[str, Any] = parsed[i]
-            classification = enrich_ai_classification(classification, h)
+            cache_classification(h.title, h.source, classification)
+            _apply_classification(h, classification, watchlist, results)
 
-            if not _passes_hard_filter(classification, watchlist, h):
-                _discard_headline(h, "failed hard filter")
-                continue
-
-            results.append((h, classification))
-            with get_session() as session:
-                row = session.get(Headline, h.id)
-                if row:
-                    row.status = "filtered"
-                    session.add(row)
-                    session.commit()
+    prune_classification_cache()
 
     # Sort by composite score (tech/stock/AI sources boosted)
     results.sort(key=lambda x: composite_score(x[0], x[1]), reverse=True)
 
     logger.info(
-        "Filter kept %d/%d headlines (after pre-filter %d)",
+        "Filter kept %d/%d headlines (pre-filter %d, cache hits %d, Haiku %d)",
         len(results),
         len(headlines),
         len(candidates),
+        cache_hits,
+        len(need_llm),
     )
     return results

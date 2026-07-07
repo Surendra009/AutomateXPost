@@ -47,6 +47,9 @@ MAX_NEWS_AGE_HOURS = 4  # ignore headlines published before this window
 MIN_SUMMARY_CHARS_FOR_SKIP_FETCH = 100  # skip full article fetch when RSS summary is enough
 ARTICLE_FETCH_CATEGORIES = frozenset({"earnings", "macro"})  # always fetch article for these
 DRAFT_DEDUP_HOURS = 24  # skip LLM if same story was drafted within this window
+INGEST_DEDUP_HOURS = 24  # cross-source title dedup window at ingest
+INGEST_TITLE_FUZZY_THRESHOLD = 88  # fuzzy match across sources (slightly below exact)
+CLASSIFICATION_CACHE_HOURS = 12  # reuse Haiku classifications within this window
 
 # Market news RSS feeds (Reuters feed is deprecated/broken — use alternatives below)
 RSS_FEEDS = [

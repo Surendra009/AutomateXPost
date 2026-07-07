@@ -14,7 +14,16 @@ class Headline(SQLModel, table=True):
     summary: str = ""
     published_at: datetime
     hash: str = Field(index=True)
+    title_fp: str = Field(default="", index=True)  # cross-source normalized title key
     status: str = "new"  # new, filtered, discarded, drafted
+
+
+class ClassificationCache(SQLModel, table=True):
+    __tablename__ = "classification_cache"
+
+    fingerprint: str = Field(primary_key=True)
+    result_json: str
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class Draft(SQLModel, table=True):
