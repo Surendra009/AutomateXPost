@@ -33,8 +33,10 @@ Set publish=false when:
 - The source is too thin to say anything beyond restating the headline
 - It's pure opinion/PR with no tradeable fact
 - You cannot identify at least ONE of: vs_expectations, significance, read_through
+- A busy trader would scroll past this — not worth posting
+- No specific numbers, tickers, or concrete market mechanism
 
-Set publish=true only when the brief gives a drafter real material to work with."""
+Set publish=true only when a professional trader would stop scrolling. Default publish=false."""
 
 
 def analyze_headline(

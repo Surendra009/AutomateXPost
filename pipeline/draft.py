@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 
-from config import DRAFT_MODEL
+from config import DRAFT_MODEL, MAX_DRAFTS_PER_CYCLE
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
@@ -67,6 +67,10 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
 
     created = 0
     for headline, classification in filtered:
+        if created >= MAX_DRAFTS_PER_CYCLE:
+            logger.info("Draft cap reached (%d/cycle)", MAX_DRAFTS_PER_CYCLE)
+            break
+
         article_text = fetch_article_text(headline.url)
         if article_text:
             logger.info("Fetched %d chars for headline %s", len(article_text), headline.id)

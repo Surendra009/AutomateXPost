@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime
 
+from config import MAX_DRAFTS_PER_CYCLE, MAX_HEADLINES_PER_CYCLE, PIPELINE_INTERVAL_SECONDS
 from database import get_setting
 from logging_config import setup_logging
 from pipeline.draft import draft_posts
@@ -33,9 +34,11 @@ async def run_pipeline_cycle() -> None:
     logger.info("Pipeline cycle starting")
     try:
         ingest_headlines()
-        headlines = get_unfiltered_headlines(limit=30)
+        headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE)
         if headlines:
             filtered = filter_headlines(headlines)
+            # Only draft top stories by relevance score
+            filtered = filtered[:MAX_DRAFTS_PER_CYCLE * 2]
             if filtered:
                 draft_posts(filtered)
     except Exception as e:

@@ -24,12 +24,14 @@ LOG_FILE = BASE_DIR / "postpilot.log"
 FILTER_MODEL = "claude-haiku-4-5"
 DRAFT_MODEL = "claude-sonnet-4-6"
 PIPELINE_INTERVAL_SECONDS = 300  # 5 min
+MAX_HEADLINES_PER_CYCLE = 20
+MAX_DRAFTS_PER_CYCLE = 2
+MIN_RELEVANCE_SCORE = 0.75
 
+# Focused feeds — removed noisy general tech blogs
 RSS_FEEDS = [
     ("CNBC Markets", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"),
     ("Reuters Business", "https://feeds.reuters.com/reuters/businessNews"),
-    ("TechCrunch", "https://techcrunch.com/feed/"),
-    ("The Verge AI", "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"),
     ("SEC EDGAR 8-K", "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-k&company=&dateb=&owner=include&count=40&output=atom"),
 ]
 
