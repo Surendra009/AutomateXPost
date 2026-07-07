@@ -19,6 +19,7 @@ from logging_config import setup_logging
 from models import Draft, Headline, Post
 from pipeline.post import PostingError, get_today_stats, publish_draft
 from pipeline.freshness import discard_stale_headlines, format_age, age_minutes, is_fresh
+from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
 from pipeline.stale import expire_stale_drafts
 
@@ -200,6 +201,7 @@ def get_settings_route(request: Request):
     settings = get_all_settings()
     settings["config"] = app_config()
     settings["pipeline"] = get_pipeline_status()
+    settings["finnhub"] = get_pipeline_status().get("finnhub") or {}
     return settings
 
 
@@ -207,6 +209,16 @@ def get_settings_route(request: Request):
 def pipeline_status(request: Request):
     require_auth(request)
     return get_pipeline_status()
+
+
+@router.get("/finnhub/test")
+def finnhub_test(request: Request):
+    require_auth(request)
+    from database import set_setting
+
+    result = test_finnhub_connection()
+    set_setting("finnhub_last_test", result)
+    return result
 
 
 @router.post("/pipeline/run")

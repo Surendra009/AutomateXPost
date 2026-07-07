@@ -9,7 +9,8 @@ from typing import Any
 import httpx
 from sqlmodel import select
 
-from config import FINNHUB_KEY, MAX_EARNINGS_DRAFTS_PER_CYCLE
+from config import MAX_EARNINGS_DRAFTS_PER_CYCLE
+from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline
@@ -100,20 +101,13 @@ def _has_actual(event: dict[str, Any]) -> bool:
 
 
 def fetch_earnings_calendar(from_date: str, to_date: str) -> list[dict[str, Any]]:
-    if not FINNHUB_KEY:
+    if not get_finnhub_key():
         return []
-    try:
-        with httpx.Client(timeout=30) as client:
-            resp = client.get(
-                "https://finnhub.io/api/v1/calendar/earnings",
-                params={"from": from_date, "to": to_date, "token": FINNHUB_KEY},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        return data.get("earningsCalendar") or []
-    except Exception as e:
-        logger.warning("Failed to fetch Finnhub earnings calendar: %s", e)
+    data, err = finnhub_get("calendar/earnings", {"from": from_date, "to": to_date})
+    if err:
+        logger.warning("Finnhub earnings calendar: %s", err)
         return []
+    return data.get("earningsCalendar") or []
 
 
 def _build_preview(event: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -230,7 +224,7 @@ def _pending_draft_for_hash(content_hash: str) -> bool:
 
 def process_earnings() -> tuple[int, int]:
     """Fetch earnings calendar and create preview/result drafts. Returns (ingested, drafts)."""
-    if not FINNHUB_KEY:
+    if not get_finnhub_key():
         return 0, 0
 
     watchlist = get_setting("watchlist", [])

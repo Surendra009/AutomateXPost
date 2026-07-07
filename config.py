@@ -12,7 +12,20 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "changeme")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-FINNHUB_KEY = os.getenv("FINNHUB_KEY", "")
+
+FINNHUB_ENV_NAMES = ("FINNHUB_KEY", "FINNHUB_API_KEY", "FINHUB_KEY")
+
+
+def get_finnhub_key() -> str:
+    """Read Finnhub API key (trimmed). Supports common env var name typos."""
+    for name in FINNHUB_ENV_NAMES:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
+
+
+FINNHUB_KEY = get_finnhub_key()
 X_API_KEY = os.getenv("X_API_KEY", "")
 X_API_SECRET = os.getenv("X_API_SECRET", "")
 X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
@@ -75,6 +88,6 @@ def get_settings():
     return {
         "anthropic_configured": bool(ANTHROPIC_API_KEY),
         "x_configured": all([X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]),
-        "finnhub_configured": bool(FINNHUB_KEY),
+        "finnhub_configured": bool(get_finnhub_key()),
         "dry_run": DRY_RUN,
     }

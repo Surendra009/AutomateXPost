@@ -377,6 +377,32 @@ document.getElementById('rejected-toggle').addEventListener('click', () => {
 
 // ── Settings ─────────────────────────────────────────────
 
+function renderFinnhubStatus(fh) {
+  const el = document.getElementById('finnhub-status');
+  if (!fh || !fh.configured && !fh.error && !fh.news) {
+    el.innerHTML = '<div class="status-row"><span>Status</span><span class="status-no">Not tested</span></div>';
+    return;
+  }
+  const rows = [];
+  if (fh.configured) {
+    rows.push(`<div class="status-row"><span>API key</span><span class="status-ok">${esc(fh.env_var || 'FINNHUB_KEY')} ${esc(fh.key_hint || '')}</span></div>`);
+  } else {
+    rows.push(`<div class="status-row"><span>API key</span><span class="status-no">Missing</span></div>`);
+  }
+  const fmt = (label, block) => {
+    if (!block) return '';
+    if (block.ok) return `<div class="status-row"><span>${label}</span><span class="status-ok">${block.count} items</span></div>`;
+    return `<div class="status-row"><span>${label}</span><span class="status-no">Failed</span></div>`;
+  };
+  rows.push(fmt('News', fh.news));
+  rows.push(fmt('Earnings', fh.earnings));
+  rows.push(fmt('Company news', fh.company_news));
+  if (fh.error) {
+    rows.push(`<div class="pipeline-error">${esc(fh.error)}</div>`);
+  }
+  el.innerHTML = rows.join('');
+}
+
 async function loadSettings() {
   try {
     const data = await api('/settings');
@@ -440,7 +466,9 @@ async function loadSettings() {
         <span>${pipe.last_drafts_created ?? 0}</span>
       </div>
       ${pipe.last_expired ? `<div class="status-row"><span>Expired stale</span><span>${pipe.last_expired}</span></div>` : ''}
-      ${err}`;
+      ${err}`);
+
+    renderFinnhubStatus(pipe.finnhub || data.finnhub);
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -468,6 +496,39 @@ document.getElementById('add-ticker').addEventListener('click', () => {
     renderWatchlist();
   }
   input.value = '';
+});
+
+document.getElementById('test-finnhub').addEventListener('click', async () => {
+  const btn = document.getElementById('test-finnhub');
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  try {
+    const res = await api('/finnhub/test');
+    renderFinnhubStatus(res);
+    if (res.error) {
+      showToast(res.error, 'error');
+    } else {
+      showToast('Finnhub connected', 'success');
+    }
+    // Refresh config row
+    const cfg = await api('/settings');
+    const items = [
+      { label: 'Dry run', on: cfg.config?.dry_run },
+      { label: 'Anthropic', on: cfg.config?.anthropic_configured },
+      { label: 'X API', on: cfg.config?.x_configured },
+      { label: 'Finnhub', on: cfg.config?.finnhub_configured },
+    ];
+    document.getElementById('config-info').innerHTML = items.map((i) => `
+      <div class="status-row">
+        <span>${esc(i.label)}</span>
+        <span class="${i.on ? 'status-ok' : 'status-no'}">${i.on ? 'On' : 'Off'}</span>
+      </div>`).join('');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test Finnhub connection';
+  }
 });
 
 document.getElementById('fetch-now').addEventListener('click', async () => {

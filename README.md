@@ -222,6 +222,18 @@ This does two things:
 - Finnhub fetches company-specific news for those symbols
 - The filter prioritizes stories mentioning your watchlist
 
+### Finnhub troubleshooting
+
+If Finnhub shows **Off** in Settings:
+
+1. Railway → your **service** → **Variables**
+2. Name: `FINNHUB_KEY` (exact spelling; `FINHUB_KEY` also works as fallback)
+3. Value: paste your key only — no quotes, no spaces before/after
+4. **Redeploy** after saving the variable
+5. In PostPilot → **Settings → Test Finnhub connection**
+
+The test reports whether the key loaded, and hits the news, earnings, and company-news APIs with the exact error if something fails.
+
 ### Verify ingestion
 
 After deploy, open **Settings → Fetch news now**. You should see:

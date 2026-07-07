@@ -11,11 +11,11 @@ import httpx
 from rapidfuzz import fuzz
 from sqlmodel import select
 
-from config import FINNHUB_KEY, MAX_NEWS_AGE_HOURS, RSS_FEEDS, AI_RSS_FEEDS, SEC_EDGAR_8K_FEED, SEC_USER_AGENT
+from config import MAX_NEWS_AGE_HOURS, RSS_FEEDS, AI_RSS_FEEDS, SEC_EDGAR_8K_FEED, SEC_USER_AGENT, get_finnhub_key
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Headline
-from pipeline.freshness import is_fresh, news_cutoff
+from pipeline.finnhub_api import finnhub_get, parse_finnhub_timestamp
 
 logger = setup_logging()
 
@@ -106,25 +106,20 @@ def fetch_sec_edgar_feed() -> list[dict]:
 
 
 def fetch_finnhub_general_news() -> list[dict]:
-    if not FINNHUB_KEY:
+    if not get_finnhub_key():
         return []
-    try:
-        with httpx.Client(timeout=30) as client:
-            resp = client.get(
-                "https://finnhub.io/api/v1/news",
-                params={"category": "general", "token": FINNHUB_KEY},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        return _finnhub_items(data, "Finnhub")
-    except Exception as e:
-        logger.warning("Failed to fetch Finnhub general news: %s", e)
+    data, err = finnhub_get("news", {"category": "general"})
+    if err:
+        logger.warning("Finnhub general news: %s", err)
         return []
+    if not isinstance(data, list):
+        return []
+    return _finnhub_items(data, "Finnhub")
 
 
 def fetch_finnhub_company_news(watchlist: list[str]) -> list[dict]:
     """Per-ticker company news — requires FINNHUB_KEY and watchlist tickers."""
-    if not FINNHUB_KEY or not watchlist:
+    if not get_finnhub_key() or not watchlist:
         return []
 
     today = datetime.utcnow().date()
@@ -132,26 +127,19 @@ def fetch_finnhub_company_news(watchlist: list[str]) -> list[dict]:
     to_date = today.isoformat()
     items: list[dict] = []
 
-    try:
-        with httpx.Client(timeout=30) as client:
-            for symbol in watchlist[:15]:
-                symbol = symbol.upper().strip()
-                if not symbol:
-                    continue
-                resp = client.get(
-                    "https://finnhub.io/api/v1/company-news",
-                    params={
-                        "symbol": symbol,
-                        "from": from_date,
-                        "to": to_date,
-                        "token": FINNHUB_KEY,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                items.extend(_finnhub_items(data, f"Finnhub ${symbol}", limit=15))
-    except Exception as e:
-        logger.warning("Failed to fetch Finnhub company news: %s", e)
+    for symbol in watchlist[:15]:
+        symbol = symbol.upper().strip()
+        if not symbol:
+            continue
+        data, err = finnhub_get(
+            "company-news",
+            {"symbol": symbol, "from": from_date, "to": to_date},
+        )
+        if err:
+            logger.warning("Finnhub company news %s: %s", symbol, err)
+            continue
+        if isinstance(data, list):
+            items.extend(_finnhub_items(data, f"Finnhub ${symbol}", limit=15))
 
     return items
 
@@ -168,7 +156,7 @@ def _finnhub_items(data: list[dict], source: str, limit: int = 30) -> list[dict]
             "url": url,
             "title": title,
             "summary": item.get("summary", "")[:500],
-            "published_at": datetime.fromtimestamp(item.get("datetime", 0)),
+            "published_at": parse_finnhub_timestamp(item.get("datetime")),
         })
     return items
 

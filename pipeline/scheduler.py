@@ -8,6 +8,7 @@ from database import get_setting, set_setting
 from logging_config import setup_logging
 from pipeline.draft import draft_posts
 from pipeline.earnings import process_earnings
+from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.filter import filter_headlines
 from pipeline.freshness import discard_stale_headlines
 from pipeline.ingest import get_unfiltered_headlines, ingest_headlines
@@ -30,28 +31,38 @@ def get_pipeline_status() -> dict:
         "last_error": get_setting("pipeline_last_error"),
         "last_ingest_by_source": get_setting("pipeline_last_ingest_by_source", {}),
         "news_sources": _active_news_sources(),
+        "finnhub": get_finnhub_status(),
     }
 
 
 def _active_news_sources() -> list[dict]:
-    from config import AI_RSS_FEEDS, FINNHUB_KEY, RSS_FEEDS, SEC_EDGAR_8K_FEED
+    from config import AI_RSS_FEEDS, RSS_FEEDS, SEC_EDGAR_8K_FEED
+    from pipeline.finnhub_api import get_finnhub_key, test_finnhub_connection
 
     sources = [{"name": name, "type": "rss", "enabled": True} for name, _ in RSS_FEEDS]
     sources.extend({"name": name, "type": "ai", "enabled": True} for name, _ in AI_RSS_FEEDS)
     sources.append({"name": SEC_EDGAR_8K_FEED[0], "type": "rss", "enabled": True})
+    fh_ok = bool(get_finnhub_key())
     sources.append({
         "name": "Finnhub Earnings",
         "type": "api",
-        "enabled": bool(FINNHUB_KEY),
-        "hint": None if FINNHUB_KEY else "Requires FINNHUB_KEY",
+        "enabled": fh_ok,
+        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
     })
     sources.append({
         "name": "Finnhub (general + company)",
         "type": "api",
-        "enabled": bool(FINNHUB_KEY),
-        "hint": None if FINNHUB_KEY else "Set FINNHUB_KEY on Railway for stock news API",
+        "enabled": fh_ok,
+        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
     })
     return sources
+
+
+def get_finnhub_status() -> dict:
+    from database import get_setting
+
+    cached = get_setting("finnhub_last_test")
+    return cached or {}
 
 
 def _save_cycle_stats(
@@ -104,6 +115,8 @@ async def run_pipeline_cycle() -> dict:
         expired = expire_stale_drafts()
         discarded = discard_stale_headlines()
         ingest_count, ingest_by_source = ingest_headlines()
+        finnhub_test = test_finnhub_connection()
+        set_setting("finnhub_last_test", finnhub_test)
         earnings_ingested, earnings_drafts = process_earnings()
         if earnings_ingested:
             ingest_count += earnings_ingested
