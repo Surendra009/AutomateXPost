@@ -18,6 +18,8 @@ from database import get_all_settings, get_session, get_setting, set_setting
 from logging_config import setup_logging
 from models import Draft, Headline, Post
 from pipeline.post import PostingError, get_today_stats, publish_draft
+from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
+from pipeline.stale import expire_stale_drafts
 
 logger = setup_logging()
 router = APIRouter(prefix="/api")
@@ -39,15 +41,18 @@ class SettingsPatch(BaseModel):
     paused_until: Optional[str] = None
 
 
-def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
-    age = datetime.utcnow() - draft.created_at
+def _format_age(dt: datetime) -> str:
+    age = datetime.utcnow() - dt
     minutes = int(age.total_seconds() / 60)
     if minutes < 60:
-        age_str = f"{minutes}m ago"
-    elif minutes < 1440:
-        age_str = f"{minutes // 60}h ago"
-    else:
-        age_str = f"{minutes // 1440}d ago"
+        return f"{minutes}m ago"
+    if minutes < 1440:
+        return f"{minutes // 60}h ago"
+    return f"{minutes // 1440}d ago"
+
+
+def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
+    is_seed = bool(headline and "example.com" in (headline.url or ""))
 
     return {
         "id": draft.id,
@@ -59,11 +64,14 @@ def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
         "confidence": draft.confidence,
         "status": draft.status,
         "created_at": draft.created_at.isoformat(),
-        "age": age_str,
+        "age": _format_age(draft.created_at),
+        "story_age": _format_age(headline.published_at) if headline else None,
+        "is_seed": is_seed,
         "headline": {
             "source": headline.source if headline else "",
             "url": headline.url if headline else "",
             "title": headline.title if headline else "",
+            "published_at": headline.published_at.isoformat() if headline else None,
         } if headline else None,
     }
 
@@ -94,6 +102,7 @@ def me(request: Request):
 @router.get("/queue")
 def get_queue(request: Request):
     require_auth(request)
+    expire_stale_drafts()
     with get_session() as session:
         drafts = session.exec(
             select(Draft)
@@ -194,7 +203,23 @@ def get_settings_route(request: Request):
     from config import get_settings as app_config
     settings = get_all_settings()
     settings["config"] = app_config()
+    settings["pipeline"] = get_pipeline_status()
     return settings
+
+
+@router.get("/pipeline/status")
+def pipeline_status(request: Request):
+    require_auth(request)
+    return get_pipeline_status()
+
+
+@router.post("/pipeline/run")
+async def pipeline_run(request: Request):
+    require_auth(request)
+    status = get_pipeline_status()
+    if status["running"]:
+        raise HTTPException(status_code=409, detail="Pipeline is already running")
+    return await run_pipeline_cycle()
 
 
 @router.patch("/settings")

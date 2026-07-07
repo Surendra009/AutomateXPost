@@ -144,7 +144,7 @@ docker run -d \
    | `SECRET_KEY` | Random string (e.g. `openssl rand -hex 32`) |
    | `DATABASE_URL` | `sqlite:////data/postpilot.db` |
    | `DRY_RUN` | `true` (set `false` when X keys are ready) |
-   | `SEED_ON_START` | `true` (creates 5 test drafts on first boot) |
+   | `SEED_ON_START` | `false` (set `true` locally to load 5 sample drafts) |
 
    Add `ANTHROPIC_API_KEY` and X API keys when ready.
 

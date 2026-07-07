@@ -19,7 +19,7 @@ logger = setup_logging()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    if os.getenv("SEED_ON_START", "true").lower() in ("1", "true", "yes"):
+    if os.getenv("SEED_ON_START", "false").lower() in ("1", "true", "yes"):
         seed()
     start_pipeline(PIPELINE_INTERVAL_SECONDS)
     logger.info("PostPilot started (dry_run=%s)", get_settings()["dry_run"])

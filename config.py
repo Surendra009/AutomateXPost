@@ -27,6 +27,7 @@ PIPELINE_INTERVAL_SECONDS = 300  # 5 min
 MAX_HEADLINES_PER_CYCLE = 20
 MAX_DRAFTS_PER_CYCLE = 2
 MIN_RELEVANCE_SCORE = 0.75
+STALE_DRAFT_HOURS = 4  # pending drafts older than this are auto-removed
 
 # Focused feeds — removed noisy general tech blogs
 RSS_FEEDS = [

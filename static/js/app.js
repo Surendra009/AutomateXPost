@@ -192,8 +192,13 @@ function renderDraftCard(d) {
   return `
     <article class="post-card" data-id="${d.id}" data-impact="${esc(d.impact)}">
       <div class="post-head">
-        <span class="post-source">${source}</span>
-        <span class="post-age">${esc(d.age)}</span>
+        <span class="post-source">${source}${d.is_seed ? ' <span class="seed-badge">Sample</span>' : ''}</span>
+        <div class="post-head-actions">
+          <button type="button" class="btn-icon" data-action="copy" data-id="${d.id}" title="Copy text" aria-label="Copy draft text">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          </button>
+          <span class="post-age" title="${d.story_age ? `Story ${d.story_age}` : ''}">${esc(d.age)}</span>
+        </div>
       </div>
       ${body}
     </article>`;
@@ -261,6 +266,29 @@ async function handleCardAction(e) {
     } catch (err) {
       showToast(err.message, 'error');
       btn.disabled = false;
+    }
+  } else if (action === 'copy') {
+    const card = btn.closest('.post-card');
+    const text = card.querySelector('.post-text')?.textContent
+      || card.querySelector('.edit-box')?.value
+      || '';
+    if (!text) {
+      showToast('Nothing to copy', 'error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Copied to clipboard', 'success');
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast('Copied to clipboard', 'success');
     }
   }
 }
@@ -362,6 +390,7 @@ async function loadSettings() {
     }
 
     const cfg = data.config || {};
+    const pipe = data.pipeline || {};
     const items = [
       { label: 'Dry run', on: cfg.dry_run },
       { label: 'Anthropic', on: cfg.anthropic_configured },
@@ -373,6 +402,24 @@ async function loadSettings() {
         <span>${esc(i.label)}</span>
         <span class="${i.on ? 'status-ok' : 'status-no'}">${i.on ? 'On' : 'Off'}</span>
       </div>`).join('');
+
+    const lastRun = pipe.last_run_at ? formatDate(pipe.last_run_at) : 'Never';
+    const err = pipe.last_error ? `<div class="pipeline-error">${esc(pipe.last_error)}</div>` : '';
+    document.getElementById('pipeline-status').innerHTML = `
+      <div class="status-row">
+        <span>Last fetch</span>
+        <span>${esc(lastRun)}</span>
+      </div>
+      <div class="status-row">
+        <span>New headlines</span>
+        <span>${pipe.last_ingest_count ?? 0}</span>
+      </div>
+      <div class="status-row">
+        <span>Drafts created</span>
+        <span>${pipe.last_drafts_created ?? 0}</span>
+      </div>
+      ${pipe.last_expired ? `<div class="status-row"><span>Expired stale</span><span>${pipe.last_expired}</span></div>` : ''}
+      ${err}`;
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -400,6 +447,27 @@ document.getElementById('add-ticker').addEventListener('click', () => {
     renderWatchlist();
   }
   input.value = '';
+});
+
+document.getElementById('fetch-now').addEventListener('click', async () => {
+  const btn = document.getElementById('fetch-now');
+  btn.disabled = true;
+  btn.textContent = 'Fetching…';
+  try {
+    const res = await api('/pipeline/run', { method: 'POST' });
+    const parts = [];
+    if (res.last_ingest_count) parts.push(`${res.last_ingest_count} new headline${res.last_ingest_count === 1 ? '' : 's'}`);
+    if (res.last_drafts_created) parts.push(`${res.last_drafts_created} draft${res.last_drafts_created === 1 ? '' : 's'}`);
+    if (res.last_expired) parts.push(`${res.last_expired} expired`);
+    showToast(parts.length ? parts.join(', ') : 'Fetch complete — no new stories', 'success');
+    loadSettings();
+    if (currentTab === 'queue') loadQueue();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Fetch news now';
+  }
 });
 
 document.getElementById('save-settings').addEventListener('click', async () => {

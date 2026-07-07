@@ -265,6 +265,57 @@ body {
   font-size: 13px;
 }
 
+.post-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.btn-icon:active { opacity: 0.7; }
+
+.seed-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #fffbeb;
+  color: #b45309;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+
+.fetch-btn { margin-top: 12px; }
+
+.muted-note { margin-top: 10px; font-size: 13px; }
+
+.pipeline-error {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: var(--red);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .post-source {
   color: var(--muted);
   min-width: 0;
