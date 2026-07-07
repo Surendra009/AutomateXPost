@@ -44,6 +44,9 @@ MIN_RELEVANCE_SCORE = 0.75
 MIN_AI_RELEVANCE_SCORE = 0.72  # slightly lower bar for major AI product news
 STALE_DRAFT_HOURS = 4  # pending drafts older than this are auto-removed
 MAX_NEWS_AGE_HOURS = 4  # ignore headlines published before this window
+MIN_SUMMARY_CHARS_FOR_SKIP_FETCH = 100  # skip full article fetch when RSS summary is enough
+ARTICLE_FETCH_CATEGORIES = frozenset({"earnings", "macro"})  # always fetch article for these
+DRAFT_DEDUP_HOURS = 24  # skip LLM if same story was drafted within this window
 
 # Market news RSS feeds (Reuters feed is deprecated/broken — use alternatives below)
 RSS_FEEDS = [

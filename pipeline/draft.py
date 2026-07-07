@@ -9,7 +9,8 @@ from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
 from pipeline.ai_news import infer_ai_tickers
-from pipeline.enrich import fetch_article_text
+from pipeline.dedup import was_recently_drafted
+from pipeline.enrich import get_article_text_for_draft
 from pipeline.filter import _call_claude, _parse_json_array
 from pipeline.freshness import is_fresh
 
@@ -149,7 +150,12 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
             _discard_headline(headline, "story too old to draft")
             continue
 
-        article_text = fetch_article_text(headline.url)
+        if was_recently_drafted(headline.title, headline.source):
+            _discard_headline(headline, "duplicate story drafted recently")
+            logger.debug("Skipping duplicate story: %s", headline.title[:80])
+            continue
+
+        article_text = get_article_text_for_draft(headline, classification)
         prompt = _build_draft_prompt(headline, classification, article_text)
         raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=600)
         if not raw:

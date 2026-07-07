@@ -6,7 +6,7 @@ Automated X (Twitter) posting system for stock, AI, and macro news — with a mo
 
 1. **Ingest** — Every 5 minutes, fetches headlines from CNBC, Bloomberg, WSJ, MarketWatch, Yahoo Finance, Seeking Alpha, FT, SEC EDGAR 8-K, and optionally Finnhub
 2. **Filter** — Claude Haiku classifies relevance (stock-moving news only)
-3. **Draft** — Claude Sonnet decides skip/write and formats the post in one call
+3. **Draft** — Claude Sonnet decides skip/write and formats the post in one call (skips duplicate stories; fetches full article only when needed)
 4. **Queue** — Drafts wait for your review on the mobile PWA
 5. **Post** — Approved drafts publish to X via API (with safety rails)
 
@@ -267,7 +267,7 @@ postpilot/
 ├── pipeline/
 │   ├── ingest.py       # RSS + Finnhub
 │   ├── filter.py       # Claude Haiku classifier
-│   ├── draft.py        # Claude Sonnet drafter
+│   ├── draft.py        # Claude Sonnet — analyze + write in one call
 │   ├── post.py         # X posting + safety rails
 │   └── scheduler.py    # Background asyncio loop
 ├── static/             # PWA (HTML, CSS, JS, icons)
