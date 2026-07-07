@@ -15,7 +15,7 @@ _pipeline_task: asyncio.Task | None = None
 
 
 async def run_pipeline_cycle() -> None:
-    """Single pipeline cycle: ingest → filter → draft."""
+    """Single pipeline cycle: ingest → filter → enrich → analyze → draft."""
     if not get_setting("pipeline_enabled", True):
         logger.debug("Pipeline disabled, skipping cycle")
         return

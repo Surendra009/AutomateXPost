@@ -1,67 +1,63 @@
-"""LLM draft step — generate X post text."""
+"""LLM draft step — generate X post text from editor analysis brief."""
 
 import json
 from datetime import datetime
 
-from config import ANTHROPIC_API_KEY, DRAFT_MODEL
+from config import DRAFT_MODEL
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
+from pipeline.analyze import analyze_headline
+from pipeline.enrich import fetch_article_text
 from pipeline.filter import _call_claude, _parse_json_array
 
 logger = setup_logging()
 
-DRAFT_SYSTEM_PROMPT = """You write X posts for a market-news account followed by traders and portfolio managers. Posts must read like a sharp human reporter sharing a quick take — not a wire headline, not a bot summary.
+DRAFT_SYSTEM_PROMPT = """You turn editor insight briefs into X posts for traders. The brief contains the VALUE — your job is to write it clearly, not to repeat the headline.
+
+## What makes a good post
+Must deliver at least ONE of these (stated plainly):
+1. vs expectations (beat/miss, above/below forecast)
+2. Significance (how big, how rare, what record)
+3. Read-through (other tickers/sectors that move because of this)
+4. What to watch next (vote, print, deadline, guidance)
 
 ## Voice
-- Natural, direct prose. Contractions are fine ("it's", "didn't").
-- Lead with the most newsworthy fact — usually a number, surprise, or concrete development.
-- Explain why it matters in the same breath (vs expectations, for which tickers, timing).
-- Never just rephrase the headline. Add detail from the summary and key_facts.
+- Human, direct, confident. Like a Bloomberg-adjacent reporter with 280 chars discipline.
+- No emojis, no hashtags. $TICKER cashtags at end or woven in.
+- Short sentences. One idea per sentence.
+- Use "reportedly" when the brief says so.
 
 ## Hard rules
-- No emojis, no hashtags. Cashtags for tickers ($NVDA).
-- Only use facts from the input. Attribute unconfirmed items with "reportedly".
-- Never invent numbers, quotes, or price moves not in the source material.
-- Never predict price direction or give buy/sell advice.
+- ONLY use facts from the brief. Never invent.
+- Do NOT open by restating the headline verbatim.
+- If the brief is thin, return {"skip": true, "reason": "..."}
+- Never predict price direction or advise buy/sell.
 
 ## Formats
+BREAKING (max 280): Fresh news. Lead with the fact + number, then significance or vs expectations in the same breath.
+CONTEXT (max 280): Connecting dots — read-through, sector move, reaction to prior news. Must name specific tickers.
+SUMMARY (max 500): Major stories. 2 short paragraphs separated by blank line. Graf 1: what happened. Graf 2: why it matters + read-through.
 
-BREAKING (max 280 chars) — urgent news just hitting. Sentence case (not ALL CAPS). Open with what happened + the key number, then a short "so what" clause.
-Good: "Nvidia beat Q4 — revenue came in at $22.1B vs ~$20.4B expected, with data center sales up 93% YoY. The beat was driven almost entirely by AI chip demand. $NVDA"
-Bad: "NVDA BEATS Q4 ESTIMATES ON STRONG DATA CENTER REVENUE"
-
-CONTEXT (max 280 chars) — how the market is reacting or connecting dots between names. Include a specific detail (%, level, comparison).
-Good: "Fed held rates at 4.25-4.50% but the dot plot now shows two cuts penciled in for 2026, up from one in December. $SPY little changed; rate-sensitive $XLRE and $XLU leading."
-Bad: "Fed holds rates steady and signals possible cuts."
-
-SUMMARY (max 500 chars) — bigger stories only. 2-3 short paragraphs separated by blank lines. First graf: what happened. Second: context (vs expectations, history, who else is affected). Third (optional): what to watch next.
-Good: "OpenAI is reportedly in talks to raise $40B at a $300B valuation, per sources familiar with the matter.\n\nThat would roughly double its last round and cement it as the most valuable private AI company. Microsoft ($MSFT), which owns ~49% of OpenAI, and Google ($GOOGL) would face a further-capitalized rival in enterprise AI."
-Bad: "OpenAI is raising money at a high valuation which is big news for AI."
-
-Return JSON only: {"format": "BREAKING"|"CONTEXT"|"SUMMARY", "text": "...", "confidence": 0.0-1.0}"""
+Return JSON: {"skip": false, "format": "...", "text": "...", "confidence": 0.0-1.0, "value_score": 0.0-1.0}
+value_score = how much non-headline insight the post delivers (0=worthless, 1=must-read)."""
 
 
-def _build_draft_prompt(headline: Headline, classification: dict) -> str:
-    tickers = classification.get("tickers", [])
-    key_facts = classification.get("key_facts", [])
-    facts_block = ""
-    if key_facts:
-        facts_block = "Key facts to weave in:\n" + "\n".join(f"- {f}" for f in key_facts) + "\n"
-
-    summary = headline.summary.strip() if headline.summary else "(no summary available — use headline carefully, stay conservative)"
-
-    return (
-        f"Headline: {headline.title}\n"
-        f"Source: {headline.source}\n"
-        f"Article summary:\n{summary[:600]}\n\n"
-        f"{facts_block}"
-        f"Why traders care: {classification.get('angle', '')}\n"
-        f"Impact: {classification.get('impact', 'med')}\n"
-        f"Category: {classification.get('category', 'other')}\n"
-        f"Tickers: {', '.join(tickers) if tickers else 'none'}\n\n"
-        "Write a post that adds value beyond the headline. Return a single JSON object."
+def _build_draft_prompt(headline: Headline, classification: dict, analysis: dict) -> str:
+    brief = (
+        f"Headline (DO NOT just repeat this): {headline.title}\n\n"
+        f"EDITOR BRIEF:\n"
+        f"- Lead fact: {analysis.get('lead_fact', '')}\n"
+        f"- Vs expectations: {analysis.get('vs_expectations') or 'n/a'}\n"
+        f"- Significance: {analysis.get('significance') or 'n/a'}\n"
+        f"- Read-through: {analysis.get('read_through') or 'n/a'}\n"
+        f"- Caveat: {analysis.get('caveat') or 'n/a'}\n"
+        f"- What to watch: {analysis.get('what_to_watch') or 'n/a'}\n"
+        f"- Suggested format: {analysis.get('suggested_format', 'CONTEXT')}\n"
+        f"- Tickers: {', '.join(analysis.get('tickers') or classification.get('tickers') or [])}\n"
+        f"- Category: {classification.get('category', 'other')}\n"
     )
+    return brief + "\nWrite the post. Return JSON."
 
 
 def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
@@ -71,7 +67,22 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
 
     created = 0
     for headline, classification in filtered:
-        prompt = _build_draft_prompt(headline, classification)
+        article_text = fetch_article_text(headline.url)
+        if article_text:
+            logger.info("Fetched %d chars for headline %s", len(article_text), headline.id)
+
+        analysis = analyze_headline(headline, classification, article_text)
+        if not analysis:
+            _discard_headline(headline, "analyze failed")
+            continue
+
+        if not analysis.get("publish"):
+            reason = analysis.get("skip_reason", "insufficient insight")
+            logger.info("Skipping headline %s: %s", headline.id, reason)
+            _discard_headline(headline, reason)
+            continue
+
+        prompt = _build_draft_prompt(headline, classification, analysis)
         raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=1024)
         if not raw:
             continue
@@ -83,28 +94,38 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
                 if text.startswith("```"):
                     lines = text.split("\n")
                     text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-                draft_data = json.loads(text)
-                parsed = [draft_data]
+                parsed = [json.loads(text)]
             except json.JSONDecodeError:
                 logger.warning("Skipping draft for headline %s — bad JSON", headline.id)
                 continue
 
         draft_data = parsed[0]
+        if draft_data.get("skip"):
+            logger.info("Drafter skipped headline %s: %s", headline.id, draft_data.get("reason"))
+            _discard_headline(headline, draft_data.get("reason", "drafter skip"))
+            continue
+
         text = draft_data.get("text", "").strip()
         if not text:
             continue
 
-        # Reject drafts that are basically just the headline
-        if _is_headline_echo(text, headline.title):
-            logger.info("Skipping headline-echo draft for %s", headline.id)
+        value_score = float(draft_data.get("value_score", 0.5))
+        if value_score < 0.55:
+            logger.info("Low value_score (%.2f) for headline %s", value_score, headline.id)
+            _discard_headline(headline, "low value score")
             continue
 
-        tickers = classification.get("tickers", [])
+        if _is_headline_echo(text, headline.title):
+            logger.info("Skipping headline-echo draft for %s", headline.id)
+            _discard_headline(headline, "headline echo")
+            continue
+
+        tickers = analysis.get("tickers") or classification.get("tickers", [])
         with get_session() as session:
             draft = Draft(
                 headline_id=headline.id,
                 text=text,
-                format=draft_data.get("format", "CONTEXT"),
+                format=draft_data.get("format", analysis.get("suggested_format", "CONTEXT")),
                 impact=classification.get("impact", "med"),
                 category=classification.get("category", "other"),
                 tickers=",".join(tickers) if tickers else "",
@@ -124,8 +145,17 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
     return created
 
 
+def _discard_headline(headline: Headline, reason: str) -> None:
+    logger.debug("Discarding headline %s: %s", headline.id, reason)
+    with get_session() as session:
+        row = session.get(Headline, headline.id)
+        if row:
+            row.status = "discarded"
+            session.add(row)
+            session.commit()
+
+
 def _is_headline_echo(text: str, title: str) -> bool:
-    """True if draft is too similar to the headline (likely low-effort)."""
     from rapidfuzz import fuzz
 
     normalized_text = " ".join(text.lower().split())[:120]
