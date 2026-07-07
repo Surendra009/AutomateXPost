@@ -1,4 +1,4 @@
-"""LLM draft step — formatted multi-line X posts."""
+"""LLM draft step — single Sonnet call (analyze + write combined)."""
 
 import json
 import re
@@ -8,7 +8,7 @@ from config import DRAFT_MODEL, MAX_DRAFTS_PER_CYCLE
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
-from pipeline.analyze import analyze_headline
+from pipeline.ai_news import infer_ai_tickers
 from pipeline.enrich import fetch_article_text
 from pipeline.filter import _call_claude, _parse_json_array
 from pipeline.freshness import is_fresh
@@ -17,72 +17,91 @@ logger = setup_logging()
 
 MAX_CHARS = {"BREAKING": 260, "CONTEXT": 280, "SUMMARY": 380}
 
-DRAFT_SYSTEM_PROMPT = """You write informative formatted X posts about tech and stock news. Each post should teach the reader something useful — not just restate a headline.
+DRAFT_SYSTEM_PROMPT = """You read tech and stock news, decide if it's worth posting on X, and write the post in one step.
 
-## Layout (use \\n for line breaks)
+Return JSON only:
+{
+  "skip": false,
+  "skip_reason": "only if skip is true",
+  "format": "BREAKING"|"CONTEXT"|"SUMMARY",
+  "tickers": ["NVDA"],
+  "text": "multi-line post with \\n line breaks",
+  "confidence": 0.0-1.0
+}
 
-BREAKING & CONTEXT — 3-4 lines:
+## When to skip (skip=true)
+- Vague wire headlines with no specific company or data ("stocks rise", "investors await Fed")
+- Rehashed news with no new information
+- Can't explain what happened AND why it matters in two short lines
+- Minor UI tweaks or fluff without real product/market impact
+
+## Post layout (use \\n in text)
 ```
-What happened (specific: company + action)
+What happened (company + specific action)
 
-Why it matters — what changes for investors/builders (not fluff)
+Why it matters — useful takeaway for investors/builders
 
 $TICKER
 ```
 
 ## Rules
-- Be specific: name the company, product, or number
-- Line 2 must add value — the "so what" (competitive angle, stock impact, user impact)
-- Sentence case. Never ALL CAPS (except $TICKERS).
-- Simple words. No jargon dumps.
-- Max 2 numbers total across the whole post.
-- No emojis, no hashtags.
-- Never write vague wire text like "stocks rise on optimism" or "investors watch Fed"
-- Each line short (under ~70 characters).
-- Tickers always on the last line.
+- Be specific: company, product, or one key number
+- Line 2 = the "so what" — competitive angle, stock impact, or user impact
+- Sentence case. Never ALL CAPS except $TICKERS
+- Max 2 numbers in the whole post
+- No emojis, no hashtags
+- Each line under ~70 characters
+- Tickers on the last line (use tickers array too)
+- Don't copy the headline verbatim
 
-## Good example (earnings)
-```
-Rivian sold 75M shares at ~$20
-Raising $1.5B — stock down ~15% on dilution
-
-$RIVN
-```
-
-## Good example (AI product)
+## Good example
 ```
 Anthropic launched Claude on mobile and web
 Cowork agents now run outside the desktop app
 
 $GOOGL $AMZN
-```
-
-## Bad (never)
-- Vague headline rewrites ("markets rally", "investors eye Fed")
-- One long run-on sentence
-- ALL CAPS wire text
-- No clear takeaway in line 2
-
-Return JSON: {"skip": false, "format": "BREAKING"|"CONTEXT"|"SUMMARY", "text": "...", "confidence": 0.0-1.0}
-Use \\n in the text string for line breaks."""
+```"""
 
 
-def _build_draft_prompt(headline: Headline, classification: dict, analysis: dict) -> str:
-    tickers = analysis.get("tickers") or classification.get("tickers", [])
-    fmt = analysis.get("suggested_format", "CONTEXT")
-    char_limit = MAX_CHARS.get(fmt, 280)
-    ticker_str = " ".join(f"${t}" for t in tickers) if tickers else ""
+def _build_draft_prompt(headline: Headline, classification: dict, article_text: str) -> str:
+    tickers = classification.get("tickers") or []
+    ticker_str = ", ".join(tickers) if tickers else "infer from story"
+    parts = [
+        f"Headline (don't copy): {headline.title}",
+        f"Source: {headline.source}",
+        f"Category: {classification.get('category', 'other')}",
+        f"Impact: {classification.get('impact', 'med')}",
+        f"Suggested tickers: {ticker_str}",
+    ]
+    if headline.summary:
+        parts.append(f"Summary: {headline.summary[:500]}")
+    if classification.get("angle"):
+        parts.append(f"Angle: {classification['angle']}")
+    if article_text:
+        parts.append(f"Article excerpt:\n{article_text[:2500]}")
+    parts.append("\nDecide skip or write the post. Return JSON.")
+    return "\n\n".join(parts)
 
-    return (
-        f"Headline (don't copy): {headline.title}\n\n"
-        f"Line 1 idea (what happened): {analysis.get('hook', '')}\n"
-        f"Line 2 idea (why it matters): {analysis.get('why_it_matters') or 'n/a'}\n"
-        f"Key number (max one): {analysis.get('one_number') or 'optional'}\n"
-        f"Tickers for last line: {ticker_str or 'none'}\n"
-        f"Format: {fmt}\n"
-        f"Max {char_limit} chars total\n\n"
-        "Write a formatted multi-line post. Return JSON."
-    )
+
+def _parse_draft_response(raw: str) -> dict | None:
+    parsed = _parse_json_array(raw)
+    if parsed:
+        return parsed[0]
+    try:
+        text = raw.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _resolve_tickers(draft_data: dict, classification: dict, headline: Headline) -> list[str]:
+    tickers = [t.upper() for t in draft_data.get("tickers") or classification.get("tickers") or []]
+    if not tickers:
+        tickers = infer_ai_tickers(f"{headline.title} {headline.summary}")
+    return tickers
 
 
 def _normalize_post(text: str, tickers: list[str]) -> str:
@@ -90,7 +109,6 @@ def _normalize_post(text: str, tickers: list[str]) -> str:
     text = text.replace("\\n", "\n").strip()
     lines = [ln.strip() for ln in text.split("\n")]
 
-    # Remove empty lines except keep single blanks between blocks
     cleaned: list[str] = []
     for ln in lines:
         if not ln:
@@ -99,7 +117,6 @@ def _normalize_post(text: str, tickers: list[str]) -> str:
             continue
         cleaned.append(ln)
 
-    # Strip ticker lines from body — we'll re-add at end
     body_lines = []
     ticker_pattern = re.compile(r"^\$[A-Z]{1,5}$")
     for ln in cleaned:
@@ -133,38 +150,23 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
             continue
 
         article_text = fetch_article_text(headline.url)
-        analysis = analyze_headline(headline, classification, article_text)
-        if not analysis:
-            _discard_headline(headline, "analyze failed")
-            continue
-
-        if not analysis.get("publish"):
-            _discard_headline(headline, analysis.get("skip_reason", "insufficient insight"))
-            continue
-
-        tickers = analysis.get("tickers") or classification.get("tickers", [])
-        prompt = _build_draft_prompt(headline, classification, analysis)
-        raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=500)
+        prompt = _build_draft_prompt(headline, classification, article_text)
+        raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=600)
         if not raw:
+            _discard_headline(headline, "draft LLM failed")
             continue
 
-        parsed = _parse_json_array(raw)
-        if not parsed:
-            try:
-                text = raw.strip()
-                if text.startswith("```"):
-                    lines = text.split("\n")
-                    text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-                parsed = [json.loads(text)]
-            except json.JSONDecodeError:
-                continue
+        draft_data = _parse_draft_response(raw)
+        if not draft_data:
+            logger.warning("Unparseable draft JSON for headline %s", headline.id)
+            continue
 
-        draft_data = parsed[0]
         if draft_data.get("skip"):
-            _discard_headline(headline, draft_data.get("reason", "drafter skip"))
+            _discard_headline(headline, draft_data.get("skip_reason", "drafter skip"))
             continue
 
-        fmt = draft_data.get("format", analysis.get("suggested_format", "CONTEXT"))
+        tickers = _resolve_tickers(draft_data, classification, headline)
+        fmt = draft_data.get("format", "CONTEXT")
         text = _normalize_post(draft_data.get("text", "").strip(), tickers)
 
         if not text or not _passes_style_check(text, fmt):
@@ -196,7 +198,7 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
             session.commit()
             created += 1
 
-    logger.info("Created %d drafts", created)
+    logger.info("Created %d drafts (1 Sonnet call each)", created)
     return created
 
 
@@ -218,11 +220,9 @@ def _passes_style_check(text: str, fmt: str) -> bool:
     if len(lines) < 2:
         return False
 
-    # Long single-line posts without formatting
     if "\n" not in text and len(text) > 100:
         return False
 
-    # No line should be a paragraph
     for ln in lines:
         if len(ln) > 100:
             return False

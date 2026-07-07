@@ -84,7 +84,7 @@ def _save_cycle_stats(
 
 
 async def run_pipeline_cycle() -> dict:
-    """Single pipeline cycle: expire → ingest → filter → enrich → analyze → draft."""
+    """Single pipeline cycle: expire → ingest → filter → draft (one Sonnet call per story)."""
     global _pipeline_running
 
     if _pipeline_running:
