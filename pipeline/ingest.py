@@ -16,6 +16,7 @@ from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Headline
 from pipeline.finnhub_api import finnhub_get, parse_finnhub_timestamp
+from pipeline.freshness import is_fresh, news_cutoff
 
 logger = setup_logging()
 
