@@ -8,6 +8,7 @@ from database import get_setting, set_setting
 from logging_config import setup_logging
 from pipeline.draft import draft_posts
 from pipeline.filter import filter_headlines
+from pipeline.freshness import discard_stale_headlines
 from pipeline.ingest import get_unfiltered_headlines, ingest_headlines
 from pipeline.stale import expire_stale_drafts
 
@@ -93,6 +94,7 @@ async def run_pipeline_cycle() -> dict:
 
         logger.info("Pipeline cycle starting")
         expired = expire_stale_drafts()
+        discarded = discard_stale_headlines()
         ingest_count, ingest_by_source = ingest_headlines()
         headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE)
         if headlines:
@@ -108,10 +110,11 @@ async def run_pipeline_cycle() -> dict:
             ingest_by_source=ingest_by_source,
         )
         logger.info(
-            "Pipeline cycle complete (ingested=%d, drafts=%d, expired=%d)",
+            "Pipeline cycle complete (ingested=%d, drafts=%d, expired=%d, discarded=%d)",
             ingest_count,
             drafts_created,
             expired,
+            discarded,
         )
     except Exception as e:
         logger.error("Pipeline cycle error: %s", e, exc_info=True)

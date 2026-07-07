@@ -11,10 +11,11 @@ import httpx
 from rapidfuzz import fuzz
 from sqlmodel import select
 
-from config import FINNHUB_KEY, RSS_FEEDS, SEC_EDGAR_8K_FEED, SEC_USER_AGENT
+from config import FINNHUB_KEY, MAX_NEWS_AGE_HOURS, RSS_FEEDS, SEC_EDGAR_8K_FEED, SEC_USER_AGENT
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Headline
+from pipeline.freshness import is_fresh, news_cutoff
 
 logger = setup_logging()
 
@@ -192,12 +193,17 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
         source_batches.append(("Finnhub watchlist", finnhub_company))
 
     per_source: dict[str, int] = {}
+    skipped_stale: dict[str, int] = {}
     new_count = 0
 
     with get_session() as session:
         for source, items in source_batches:
             added = 0
+            skipped = 0
             for item in items:
+                if not is_fresh(item["published_at"]):
+                    skipped += 1
+                    continue
                 chash = _content_hash(item["title"], item["url"])
                 if _is_duplicate(session, item["title"], chash):
                     continue
@@ -214,18 +220,23 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
                 new_count += 1
                 added += 1
             per_source[source] = added
+            if skipped:
+                skipped_stale[source] = skipped
         session.commit()
 
+    if skipped_stale:
+        logger.info("Skipped stale headlines (>%dh): %s", MAX_NEWS_AGE_HOURS, skipped_stale)
     logger.info("Ingested %d new headlines: %s", new_count, per_source)
     return new_count, per_source
 
 
 def get_unfiltered_headlines(limit: int = 50) -> list[Headline]:
+    cutoff = news_cutoff()
     with get_session() as session:
         return list(
             session.exec(
                 select(Headline)
-                .where(Headline.status == "new")
+                .where(Headline.status == "new", Headline.published_at >= cutoff)
                 .order_by(Headline.published_at.desc())
                 .limit(limit)
             ).all()

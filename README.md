@@ -223,7 +223,9 @@ If **New headlines** stays at 0, check deploy logs. If headlines appear but **Dr
 - **Nothing posts automatically** — every draft requires approval
 - Max 20 posts/day (configurable)
 - Min 5 minutes between posts (configurable)
-- Drafts older than 12 hours are rejected as stale
+- Drafts older than 4 hours are rejected as stale
+- Headlines published more than 4 hours ago are never drafted or posted
+- Story age is shown on each queue card (`Story 2h ago`)
 - Dry-run mode for testing without X API keys
 
 ## Project structure

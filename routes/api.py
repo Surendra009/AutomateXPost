@@ -18,6 +18,7 @@ from database import get_all_settings, get_session, get_setting, set_setting
 from logging_config import setup_logging
 from models import Draft, Headline, Post
 from pipeline.post import PostingError, get_today_stats, publish_draft
+from pipeline.freshness import discard_stale_headlines, format_age, age_minutes, is_fresh
 from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
 from pipeline.stale import expire_stale_drafts
 
@@ -41,18 +42,10 @@ class SettingsPatch(BaseModel):
     paused_until: Optional[str] = None
 
 
-def _format_age(dt: datetime) -> str:
-    age = datetime.utcnow() - dt
-    minutes = int(age.total_seconds() / 60)
-    if minutes < 60:
-        return f"{minutes}m ago"
-    if minutes < 1440:
-        return f"{minutes // 60}h ago"
-    return f"{minutes // 1440}d ago"
-
-
 def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
     is_seed = bool(headline and "example.com" in (headline.url or ""))
+    story_age = format_age(headline.published_at) if headline else None
+    story_mins = age_minutes(headline.published_at) if headline else None
 
     return {
         "id": draft.id,
@@ -64,8 +57,10 @@ def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
         "confidence": draft.confidence,
         "status": draft.status,
         "created_at": draft.created_at.isoformat(),
-        "age": _format_age(draft.created_at),
-        "story_age": _format_age(headline.published_at) if headline else None,
+        "age": format_age(draft.created_at),
+        "story_age": story_age,
+        "story_age_minutes": story_mins,
+        "story_fresh": is_fresh(headline.published_at) if headline else True,
         "is_seed": is_seed,
         "headline": {
             "source": headline.source if headline else "",
@@ -103,6 +98,7 @@ def me(request: Request):
 def get_queue(request: Request):
     require_auth(request)
     expire_stale_drafts()
+    discard_stale_headlines()
     with get_session() as session:
         drafts = session.exec(
             select(Draft)

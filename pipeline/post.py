@@ -4,10 +4,11 @@ from datetime import datetime, timedelta
 
 from sqlmodel import select
 
-from config import DRY_RUN, get_settings
+from config import DRY_RUN, MAX_NEWS_AGE_HOURS, get_settings
 from database import count_posts_today, get_session, last_post_time
 from logging_config import setup_logging
-from models import Draft, Post
+from models import Draft, Headline, Post
+from pipeline.freshness import is_fresh
 
 logger = setup_logging()
 
@@ -32,9 +33,16 @@ def check_safety_rails(draft: Draft, daily_cap: int, cooldown_minutes: int) -> N
     if not settings["x_configured"] and not settings["dry_run"]:
         raise PostingError("X API keys not configured")
 
+    with get_session() as session:
+        headline = session.get(Headline, draft.headline_id)
+        if headline and not is_fresh(headline.published_at):
+            raise PostingError(
+                f"Story is older than {MAX_NEWS_AGE_HOURS} hours — too stale to post"
+            )
+
     age = datetime.utcnow() - draft.created_at
-    if age > timedelta(hours=12):
-        raise PostingError("Draft is older than 12 hours (stale news)")
+    if age > timedelta(hours=MAX_NEWS_AGE_HOURS):
+        raise PostingError(f"Draft is older than {MAX_NEWS_AGE_HOURS} hours (stale news)")
 
     today_count = count_posts_today()
     if today_count >= daily_cap:

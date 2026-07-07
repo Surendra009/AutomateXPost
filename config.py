@@ -28,6 +28,7 @@ MAX_HEADLINES_PER_CYCLE = 20
 MAX_DRAFTS_PER_CYCLE = 2
 MIN_RELEVANCE_SCORE = 0.75
 STALE_DRAFT_HOURS = 4  # pending drafts older than this are auto-removed
+MAX_NEWS_AGE_HOURS = 4  # ignore headlines published before this window
 
 # Market news RSS feeds (Reuters feed is deprecated/broken — use alternatives below)
 RSS_FEEDS = [

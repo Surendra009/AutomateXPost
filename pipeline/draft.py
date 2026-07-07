@@ -11,6 +11,7 @@ from models import Draft, Headline
 from pipeline.analyze import analyze_headline
 from pipeline.enrich import fetch_article_text
 from pipeline.filter import _call_claude, _parse_json_array
+from pipeline.freshness import is_fresh
 
 logger = setup_logging()
 
@@ -124,6 +125,10 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
         if created >= MAX_DRAFTS_PER_CYCLE:
             logger.info("Draft cap reached (%d/cycle)", MAX_DRAFTS_PER_CYCLE)
             break
+
+        if not is_fresh(headline.published_at):
+            _discard_headline(headline, "story too old to draft")
+            continue
 
         article_text = fetch_article_text(headline.url)
         analysis = analyze_headline(headline, classification, article_text)

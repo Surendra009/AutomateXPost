@@ -349,6 +349,26 @@ body {
   flex-shrink: 0;
   color: var(--dim);
   font-weight: 500;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.post-age-label {
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 10px;
+  margin-right: 4px;
+}
+
+.post-age.is-aging {
+  color: var(--amber);
+}
+
+.post-age.is-stale {
+  color: var(--red);
+  font-weight: 700;
 }
 
 .post-body {

@@ -189,6 +189,10 @@ function renderDraftCard(d) {
       </div>`;
   }
 
+  const storyMins = d.story_age_minutes ?? 0;
+  const ageClass = storyMins >= 240 ? 'is-stale' : storyMins >= 180 ? 'is-aging' : '';
+  const storyLabel = d.story_age || d.age;
+
   return `
     <article class="post-card" data-id="${d.id}" data-impact="${esc(d.impact)}">
       <div class="post-head">
@@ -197,7 +201,9 @@ function renderDraftCard(d) {
           <button type="button" class="btn-icon" data-action="copy" data-id="${d.id}" title="Copy text" aria-label="Copy draft text">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           </button>
-          <span class="post-age" title="${d.story_age ? `Story ${d.story_age}` : ''}">${esc(d.age)}</span>
+          <span class="post-age ${ageClass}" title="Draft created ${esc(d.age)} ago">
+            <span class="post-age-label">Story</span> ${esc(storyLabel)}
+          </span>
         </div>
       </div>
       ${body}

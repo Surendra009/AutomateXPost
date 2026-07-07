@@ -9,6 +9,7 @@ from config import ANTHROPIC_API_KEY, FILTER_MODEL, MIN_RELEVANCE_SCORE
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Headline
+from pipeline.freshness import is_fresh
 from pipeline.noise import is_obvious_noise
 
 logger = setup_logging()
@@ -168,6 +169,9 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
     # Pre-filter obvious noise (no API cost)
     candidates: list[Headline] = []
     for h in headlines:
+        if not is_fresh(h.published_at):
+            _discard_headline(h, f"story older than freshness window")
+            continue
         noise_reason = is_obvious_noise(h)
         if noise_reason:
             _discard_headline(h, f"pre-filter: {noise_reason}")
