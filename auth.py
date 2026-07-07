@@ -50,13 +50,16 @@ def verify_session_token(token: str) -> bool:
 
 
 def set_session_cookie(response: Response, token: str) -> None:
+    import os
+
+    secure = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("HTTPS", "").lower() == "true"
     response.set_cookie(
         key=SESSION_COOKIE,
         value=token,
         httponly=True,
         samesite="lax",
         max_age=SESSION_MAX_AGE,
-        secure=False,  # set True behind HTTPS in production
+        secure=bool(secure),
     )
 
 

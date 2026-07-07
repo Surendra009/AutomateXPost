@@ -2,18 +2,27 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Build deps for Pillow / rapidfuzz wheels fallback
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc && rm -rf /var/lib/apt/lists/*
+    gcc \
+    libjpeg62-turbo-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN python generate_icons.py
+# Icons are committed in static/icons/ — no build-time generation needed
+RUN mkdir -p /data
+
+ENV SEED_ON_START=false
+ENV DATABASE_URL=sqlite:////data/postpilot.db
 
 EXPOSE 8000
 
-ENV SEED_ON_START=false
+RUN chmod +x start.sh
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./start.sh"]

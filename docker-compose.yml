@@ -4,9 +4,11 @@ services:
     ports:
       - "8000:8000"
     env_file: .env
+    environment:
+      - DATABASE_URL=sqlite:////data/postpilot.db
     volumes:
-      - postpilot-db:/app
+      - postpilot-data:/data
     restart: unless-stopped
 
 volumes:
-  postpilot-db:
+  postpilot-data:

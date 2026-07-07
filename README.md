@@ -112,16 +112,52 @@ docker run -d \
   --name postpilot \
   -p 8000:8000 \
   --env-file .env \
-  -v postpilot-data:/app/postpilot.db \
+  -e DATABASE_URL=sqlite:////data/postpilot.db \
+  -v postpilot-data:/data \
   postpilot
 ```
 
 ### Railway
 
-1. Connect your GitHub repo
-2. Railway auto-detects the Dockerfile
-3. Add environment variables from `.env.example` in the Railway dashboard
-4. Deploy — Railway provides HTTPS automatically
+> **Important:** Deploy from a branch that contains the full PostPilot code (e.g. merge [PR #1](https://github.com/Surendra009/AutomateXPost/pull/1) into `main` first). The `main` branch only has a placeholder README until the PR is merged — deploying `main` will fail.
+
+#### Step-by-step
+
+1. **Merge the PostPilot PR** into `main` (or set Railway's deploy branch to `cursor/postpilot-standalone-e611`)
+
+2. **New Project** → **Deploy from GitHub repo** → select `AutomateXPost`
+
+3. Railway auto-detects the `Dockerfile` (also configured in `railway.toml`). No custom start command needed — leave **Start Command** blank in service settings so Railway uses `./start.sh` from the Dockerfile.
+
+4. **Add a Volume** (required for SQLite persistence):
+   - Go to your service → **Volumes** → **Add Volume**
+   - Mount path: `/data`
+
+5. **Set environment variables** (service → **Variables**):
+
+   | Variable | Value |
+   |----------|-------|
+   | `APP_PASSWORD` | Your login password |
+   | `SECRET_KEY` | Random string (e.g. `openssl rand -hex 32`) |
+   | `DATABASE_URL` | `sqlite:////data/postpilot.db` |
+   | `DRY_RUN` | `true` (set `false` when X keys are ready) |
+   | `SEED_ON_START` | `true` (creates 5 test drafts on first boot) |
+
+   Add `ANTHROPIC_API_KEY` and X API keys when ready.
+
+6. **Do NOT set `PORT`** — Railway injects it automatically at runtime. Setting it manually causes deploy failures.
+
+7. **Deploy** — Railway provides HTTPS automatically. Open the generated URL and sign in with `APP_PASSWORD`.
+
+#### Railway troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| Build fails immediately | Ensure deploy branch has the full codebase (not empty `main`) |
+| `$PORT is not a valid port number` | Remove any custom Start Command; don't set `PORT` in variables |
+| App builds but won't respond | Check logs; confirm Start Command is blank and volume is at `/data` |
+| Login doesn't stick | Railway uses HTTPS — cookies are set with `secure=True` automatically |
+| Data lost on redeploy | Add a volume mounted at `/data` with `DATABASE_URL=sqlite:////data/postpilot.db` |
 
 ### Render
 
@@ -138,7 +174,7 @@ cp .env.example .env && nano .env
 docker compose up -d   # or use the docker run command above
 ```
 
-Put nginx or Caddy in front for HTTPS. Set `secure=True` on session cookies in `auth.py` when behind HTTPS.
+Put nginx or Caddy in front for HTTPS on a VPS. On Railway/Render, HTTPS is provided automatically.
 
 ## Safety rails
 
