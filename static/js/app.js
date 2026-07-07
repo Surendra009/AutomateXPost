@@ -466,7 +466,7 @@ async function loadSettings() {
         <span>${pipe.last_drafts_created ?? 0}</span>
       </div>
       ${pipe.last_expired ? `<div class="status-row"><span>Expired stale</span><span>${pipe.last_expired}</span></div>` : ''}
-      ${err}`);
+      ${err}`;
 
     renderFinnhubStatus(pipe.finnhub || data.finnhub);
   } catch (err) {

@@ -37,7 +37,7 @@ def get_pipeline_status() -> dict:
 
 def _active_news_sources() -> list[dict]:
     from config import AI_RSS_FEEDS, RSS_FEEDS, SEC_EDGAR_8K_FEED
-    from pipeline.finnhub_api import get_finnhub_key, test_finnhub_connection
+    from pipeline.finnhub_api import get_finnhub_key
 
     sources = [{"name": name, "type": "rss", "enabled": True} for name, _ in RSS_FEEDS]
     sources.extend({"name": name, "type": "ai", "enabled": True} for name, _ in AI_RSS_FEEDS)
