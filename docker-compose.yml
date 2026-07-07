@@ -1,0 +1,12 @@
+services:
+  postpilot:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - postpilot-db:/app
+    restart: unless-stopped
+
+volumes:
+  postpilot-db:

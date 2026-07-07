@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>PostPilot</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <!-- Login Screen -->
+  <div id="login-screen" class="screen hidden">
+    <div class="login-container">
+      <div class="logo">
+        <div class="logo-icon">&#9992;</div>
+        <h1>PostPilot</h1>
+        <p class="subtitle">Market news approval</p>
+      </div>
+      <form id="login-form">
+        <input type="password" id="password-input" placeholder="Password" autocomplete="current-password" required>
+        <button type="submit" class="btn btn-primary btn-full">Sign In</button>
+      </form>
+      <p id="login-error" class="error hidden"></p>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app" class="screen hidden">
+    <header class="app-header">
+      <h1 id="screen-title">Queue</h1>
+      <span id="queue-badge" class="badge hidden">0</span>
+    </header>
+
+    <main id="main-content">
+      <!-- Queue -->
+      <div id="queue-screen" class="tab-screen">
+        <div id="pull-indicator" class="pull-indicator hidden">Release to refresh</div>
+        <div id="queue-list" class="card-list"></div>
+        <div id="queue-empty" class="empty-state hidden">
+          <p>No pending drafts</p>
+          <p class="muted">New drafts appear here when the pipeline runs</p>
+        </div>
+      </div>
+
+      <!-- History -->
+      <div id="history-screen" class="tab-screen hidden">
+        <div class="stats-bar" id="stats-bar">Today: 0/20 posted</div>
+        <h2 class="section-title">Posted</h2>
+        <div id="posted-list" class="card-list"></div>
+        <div id="posted-empty" class="empty-state hidden"><p>No posts yet</p></div>
+        <h2 class="section-title collapsible" id="rejected-toggle">
+          Rejected <span id="rejected-count">(0)</span> <span class="chevron">&#9660;</span>
+        </h2>
+        <div id="rejected-list" class="card-list collapsed"></div>
+      </div>
+
+      <!-- Settings -->
+      <div id="settings-screen" class="tab-screen hidden">
+        <div class="settings-group">
+          <label class="setting-row">
+            <span>Pipeline</span>
+            <input type="checkbox" id="pipeline-toggle" class="toggle">
+          </label>
+        </div>
+        <div class="settings-group">
+          <label class="setting-label">Daily post cap</label>
+          <input type="number" id="daily-cap" class="input" min="1" max="50" value="20">
+        </div>
+        <div class="settings-group">
+          <label class="setting-label">Cooldown (minutes)</label>
+          <input type="number" id="cooldown" class="input" min="1" max="60" value="5">
+        </div>
+        <div class="settings-group">
+          <label class="setting-label">Watchlist tickers</label>
+          <div id="watchlist-chips" class="chips"></div>
+          <div class="chip-input-row">
+            <input type="text" id="watchlist-input" class="input" placeholder="e.g. NVDA" maxlength="5">
+            <button id="add-ticker" class="btn btn-secondary">Add</button>
+          </div>
+        </div>
+        <div class="settings-group">
+          <label class="setting-label">Pause pipeline</label>
+          <div class="btn-row">
+            <button class="btn btn-secondary pause-btn" data-hours="1">1 hour</button>
+            <button class="btn btn-secondary pause-btn" data-hours="4">4 hours</button>
+            <button class="btn btn-secondary pause-btn" data-tomorrow="1">Tomorrow</button>
+          </div>
+          <p id="pause-status" class="muted"></p>
+        </div>
+        <div class="settings-group">
+          <button id="save-settings" class="btn btn-primary btn-full">Save Settings</button>
+        </div>
+        <div class="settings-footer muted" id="config-info"></div>
+      </div>
+    </main>
+
+    <!-- Bottom Nav -->
+    <nav class="bottom-nav">
+      <button class="nav-btn active" data-tab="queue">
+        <span class="nav-icon">&#128203;</span>
+        <span>Queue</span>
+        <span id="nav-badge" class="nav-badge hidden">0</span>
+      </button>
+      <button class="nav-btn" data-tab="history">
+        <span class="nav-icon">&#128337;</span>
+        <span>History</span>
+      </button>
+      <button class="nav-btn" data-tab="settings">
+        <span class="nav-icon">&#9881;</span>
+        <span>Settings</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
