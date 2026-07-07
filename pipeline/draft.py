@@ -48,12 +48,20 @@ $TICKER
 - Blank line before tickers is optional but looks good.
 - Tickers always on the last line.
 
-## Good example
+## Good example (earnings)
 ```
 Rivian sold 75M shares at ~$20
 Raising $1.5B — stock down ~15% on dilution
 
 $RIVN
+```
+
+## Good example (AI product)
+```
+Anthropic launched Claude on mobile and web
+Cowork agents now run outside the desktop app
+
+$GOOGL $AMZN
 ```
 
 ## Bad (never)

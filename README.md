@@ -206,7 +206,10 @@ Finnhub provides:
 
 ### Watchlist for ticker-focused news
 
-In **Settings → Watchlist**, add tickers you care about. This does two things:
+In **Settings → Watchlist**, add tickers you care about. For AI coverage, try:
+`MSFT` `GOOGL` `META` `NVDA` `AMZN` `AAPL`
+
+This does two things:
 - Finnhub fetches company-specific news for those symbols
 - The filter prioritizes stories mentioning your watchlist
 

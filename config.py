@@ -27,6 +27,7 @@ PIPELINE_INTERVAL_SECONDS = 300  # 5 min
 MAX_HEADLINES_PER_CYCLE = 20
 MAX_DRAFTS_PER_CYCLE = 2
 MIN_RELEVANCE_SCORE = 0.75
+MIN_AI_RELEVANCE_SCORE = 0.72  # slightly lower bar for major AI product news
 STALE_DRAFT_HOURS = 4  # pending drafts older than this are auto-removed
 MAX_NEWS_AGE_HOURS = 4  # ignore headlines published before this window
 
@@ -39,6 +40,17 @@ RSS_FEEDS = [
     ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
     ("Seeking Alpha", "https://seekingalpha.com/market_currents.xml"),
     ("Financial Times", "https://www.ft.com/rss/home"),
+]
+
+# AI company / product news
+AI_RSS_FEEDS = [
+    ("CNBC AI", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910"),
+    ("TechCrunch AI", "https://techcrunch.com/category/artificial-intelligence/feed/"),
+    ("The Verge AI", "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"),
+    ("Google AI Blog", "https://blog.google/technology/ai/rss/"),
+    ("OpenAI Blog", "https://openai.com/blog/rss.xml"),
+    ("VentureBeat AI", "https://venturebeat.com/category/ai/feed/"),
+    ("MIT Tech Review AI", "https://www.technologyreview.com/topic/artificial-intelligence/feed"),
 ]
 
 # SEC Atom feed requires a User-Agent with contact info (SEC policy)

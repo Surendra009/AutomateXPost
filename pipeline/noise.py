@@ -3,6 +3,7 @@
 import re
 
 from models import Headline
+from pipeline.ai_news import AI_SOURCES, is_ai_source, mentions_ai
 
 # Title patterns that are almost never stock-moving
 NOISE_PATTERNS = re.compile(
@@ -43,6 +44,9 @@ def is_obvious_noise(headline: Headline) -> str | None:
 
     if NOISE_PATTERNS.search(headline.title):
         return "noise pattern in title"
+
+    if is_ai_source(headline) and mentions_ai(text):
+        return None
 
     if len(headline.title) < 20 and headline.source not in ("SEC EDGAR 8-K",):
         return "title too short/vague"

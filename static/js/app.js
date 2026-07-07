@@ -153,7 +153,7 @@ function renderDraftCard(d) {
   const tags = [
     `<span class="tag tag-fmt-${fmt}">${esc(d.format)}</span>`,
     `<span class="tag tag-${esc(d.impact)}">${esc(d.impact)}</span>`,
-    `<span class="tag">${esc(d.category)}</span>`,
+    `<span class="tag tag-cat-${esc(d.category)}">${esc(d.category)}</span>`,
     ...d.tickers.map((t) => `<span class="tag tag-ticker">$${esc(t)}</span>`),
   ].join('');
 

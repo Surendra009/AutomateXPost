@@ -11,7 +11,7 @@ import httpx
 from rapidfuzz import fuzz
 from sqlmodel import select
 
-from config import FINNHUB_KEY, MAX_NEWS_AGE_HOURS, RSS_FEEDS, SEC_EDGAR_8K_FEED, SEC_USER_AGENT
+from config import FINNHUB_KEY, MAX_NEWS_AGE_HOURS, RSS_FEEDS, AI_RSS_FEEDS, SEC_EDGAR_8K_FEED, SEC_USER_AGENT
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Headline
@@ -179,6 +179,10 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
     source_batches: list[tuple[str, list[dict]]] = []
 
     for source, url in RSS_FEEDS:
+        items = fetch_rss_feed(source, url)
+        source_batches.append((source, items))
+
+    for source, url in AI_RSS_FEEDS:
         items = fetch_rss_feed(source, url)
         source_batches.append((source, items))
 

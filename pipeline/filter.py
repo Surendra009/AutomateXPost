@@ -5,10 +5,11 @@ from typing import Any
 
 from sqlmodel import select
 
-from config import ANTHROPIC_API_KEY, FILTER_MODEL, MIN_RELEVANCE_SCORE
+from config import ANTHROPIC_API_KEY, FILTER_MODEL, MIN_AI_RELEVANCE_SCORE, MIN_RELEVANCE_SCORE
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Headline
+from pipeline.ai_news import enrich_ai_classification, is_ai_source, is_material_ai_update
 from pipeline.freshness import is_fresh
 from pipeline.noise import is_obvious_noise
 
@@ -35,11 +36,20 @@ Return strict JSON per item:
 - SEC filings with material terms (8-K earnings, deals, financing)
 - IPO pricing, major funding rounds for public-market peers
 - Tariffs, sanctions, antitrust rulings affecting public companies
-- AI news ONLY if it affects hyperscaler/chip demand or a public company's revenue
+
+## AI company news — relevant=true for material product updates:
+Pass AI stories when a major lab ships something new or meaningfully upgrades a product.
+- New model releases or versions (GPT, Claude, Gemini, Llama, etc.)
+- New capabilities, features, APIs, agents, or tools from OpenAI, Anthropic, Google, Meta, Microsoft, Amazon, Nvidia, Apple
+- Major AI product launches tied to public companies (Copilot, Gemini, Meta AI, etc.)
+- Significant funding or partnership news for OpenAI, Anthropic when it moves related stocks
+Set category="ai", impact="high" for flagship model launches, "med" for feature updates.
+Include tickers: MSFT (OpenAI), GOOGL (Google/Gemini), META (Meta/Llama), AMZN (Anthropic/AWS), NVDA, AAPL as appropriate.
+tradeable=true for category ai when impact is high or med.
 
 ## relevant=false (noise) — reject these:
-- Product demos, feature launches, app updates without revenue impact
-- "AI will change everything" trend pieces, opinion, explainers
+- Product demos, minor UI tweaks, and small app updates without a real AI capability change
+- "AI will change everything" trend pieces, opinion, explainers, listicles, reviews
 - Minor partnerships, awards, marketing hires, conference appearances
 - Celebrity/crypto meme stories, human interest
 - Rehashed news without new data ("markets watch Fed" with no new info)
@@ -99,7 +109,8 @@ def _build_batch_prompt(headlines: list[Headline], watchlist: list[str]) -> str:
     watchlist_str = ", ".join(watchlist) if watchlist else "none (only pass high-impact stories)"
     lines = [
         f"User watchlist: {watchlist_str}",
-        "Without watchlist: only pass HIGH impact stories with hard data.",
+        "User wants AI company news: OpenAI, Anthropic/Claude, Google/Gemini, Meta, Microsoft, Nvidia — new models, capabilities, features.",
+        "Without watchlist: pass high-impact market stories OR material AI product news.",
         "",
     ]
     for i, h in enumerate(headlines):
@@ -112,16 +123,15 @@ def _build_batch_prompt(headlines: list[Headline], watchlist: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _passes_hard_filter(classification: dict, watchlist: list[str]) -> bool:
-    """Code-level gate after LLM — strict."""
+def _passes_hard_filter(classification: dict, watchlist: list[str], headline: Headline | None = None) -> bool:
+    """Code-level gate after LLM — strict for markets, relaxed for AI product news."""
     if not classification.get("relevant"):
         return False
 
+    category = classification.get("category", "other")
     score = float(classification.get("relevance_score", 0))
-    if score < MIN_RELEVANCE_SCORE:
-        return False
-
-    if classification.get("tradeable") is False:
+    min_score = MIN_AI_RELEVANCE_SCORE if category == "ai" else MIN_RELEVANCE_SCORE
+    if score < min_score:
         return False
 
     impact = classification.get("impact", "low")
@@ -132,17 +142,33 @@ def _passes_hard_filter(classification: dict, watchlist: list[str]) -> bool:
     watchlist_upper = [w.upper() for w in watchlist]
     on_watchlist = bool(watchlist_upper and any(t in watchlist_upper for t in tickers))
 
+    # AI product news — allow without forcing stock-trade framing
+    if category == "ai":
+        if classification.get("tradeable") is False and impact != "high":
+            return False
+        if impact == "med" and score < MIN_RELEVANCE_SCORE and not on_watchlist:
+            return False
+        text = ""
+        if headline:
+            text = f"{headline.title} {headline.summary}"
+        if not tickers and headline and not is_material_ai_update(text) and not is_ai_source(headline):
+            return False
+        return True
+
+    if classification.get("tradeable") is False:
+        return False
+
     # med impact: require watchlist hit OR score >= 0.85
     if impact == "med" and not on_watchlist and score < 0.85:
         return False
 
     # "other" category needs high impact and strong score
-    if classification.get("category") == "other" and (impact != "high" or score < 0.8):
+    if category == "other" and (impact != "high" or score < 0.8):
         return False
 
     # Need at least one ticker OR macro/geopolitics with high impact
     macro_cats = {"macro", "geopolitics", "regulatory"}
-    if not tickers and classification.get("category") not in macro_cats:
+    if not tickers and category not in macro_cats:
         return False
 
     return True
@@ -198,8 +224,9 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
             if i >= len(parsed):
                 break
             classification: dict[str, Any] = parsed[i]
+            classification = enrich_ai_classification(classification, h)
 
-            if not _passes_hard_filter(classification, watchlist):
+            if not _passes_hard_filter(classification, watchlist, h):
                 _discard_headline(h, "failed hard filter")
                 continue
 
