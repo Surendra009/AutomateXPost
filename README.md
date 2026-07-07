@@ -4,7 +4,7 @@ Automated X (Twitter) posting system for stock, AI, and macro news — with a mo
 
 ## How it works
 
-1. **Ingest** — Every 5 minutes, fetches headlines from CNBC, Reuters, TechCrunch, The Verge AI, SEC EDGAR 8-K, and optionally Finnhub
+1. **Ingest** — Every 5 minutes, fetches headlines from CNBC, Bloomberg, WSJ, MarketWatch, Yahoo Finance, Seeking Alpha, FT, SEC EDGAR 8-K, and optionally Finnhub
 2. **Filter** — Claude Haiku classifies relevance (stock-moving news only)
 3. **Draft** — Claude Sonnet writes terse, factual X posts
 4. **Queue** — Drafts wait for your review on the mobile PWA
@@ -62,7 +62,7 @@ SEED_ON_START=false uvicorn app:app
 | `X_API_SECRET` | For posting | X API consumer secret |
 | `X_ACCESS_TOKEN` | For posting | X OAuth access token |
 | `X_ACCESS_TOKEN_SECRET` | For posting | X OAuth access token secret |
-| `FINNHUB_KEY` | No | Optional Finnhub news feed |
+| `FINNHUB_KEY` | No | [Finnhub](https://finnhub.io/register) API key — general market news + per-ticker news for your watchlist |
 | `DRY_RUN` | No | `true` to skip actual X posting (default: true) |
 | `DATABASE_URL` | No | SQLite path (default: `./postpilot.db`) |
 | `LOG_LEVEL` | No | `INFO`, `DEBUG`, etc. |
@@ -180,6 +180,43 @@ docker compose up -d   # or use the docker run command above
 ```
 
 Put nginx or Caddy in front for HTTPS on a VPS. On Railway/Render, HTTPS is provided automatically.
+
+## News sources — setup
+
+PostPilot does **not** run a live web search (no Google/Bing). It works in two steps:
+
+1. **Headlines** — RSS feeds and the Finnhub API pull story titles and links.
+2. **Full articles** — When a headline passes the filter, the pipeline fetches the article URL and extracts the body text (via `trafilatura`) before drafting.
+
+### Why you might only see CNBC
+
+The old Reuters RSS feed is broken. Until the latest deploy, only CNBC was reliably returning stories. The app now also pulls from **Bloomberg, WSJ, MarketWatch, Yahoo Finance, Seeking Alpha, FT**, and **SEC 8-K filings**.
+
+### Enable Finnhub stock news (recommended)
+
+1. Create a free account at [finnhub.io/register](https://finnhub.io/register)
+2. Copy your API key
+3. On Railway → **Variables** → add `FINNHUB_KEY=your_key`
+4. Redeploy (or wait for the next deploy)
+5. In the app **Settings**, confirm **Finnhub** shows **On** under Status
+
+Finnhub provides:
+- **General market news** — broad financial headlines
+- **Company news** — when you add tickers to your **Watchlist** (e.g. `NVDA`, `TSLA`), Finnhub pulls ticker-specific stories
+
+### Watchlist for ticker-focused news
+
+In **Settings → Watchlist**, add tickers you care about. This does two things:
+- Finnhub fetches company-specific news for those symbols
+- The filter prioritizes stories mentioning your watchlist
+
+### Verify ingestion
+
+After deploy, open **Settings → Fetch news now**. You should see:
+- **News sources** — list of feeds (Finnhub Off until key is set)
+- **New headlines** — total count, with per-source breakdown (e.g. `Bloomberg Markets: 5 · Yahoo Finance: 12`)
+
+If **New headlines** stays at 0, check deploy logs. If headlines appear but **Drafts created** is 0, confirm `ANTHROPIC_API_KEY` is set — filtering and drafting require Claude.
 
 ## Safety rails
 

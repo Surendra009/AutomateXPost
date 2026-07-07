@@ -316,6 +316,21 @@ body {
   line-height: 1.4;
 }
 
+.pipeline-sources {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--dim);
+  line-height: 1.4;
+}
+
+.source-hint {
+  margin: -4px 0 8px;
+  padding-left: 0;
+  font-size: 12px;
+  color: var(--amber);
+  line-height: 1.4;
+}
+
 .post-source {
   color: var(--muted);
   min-width: 0;

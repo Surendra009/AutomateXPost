@@ -26,7 +26,23 @@ def get_pipeline_status() -> dict:
         "last_drafts_created": get_setting("pipeline_last_drafts_created", 0),
         "last_expired": get_setting("pipeline_last_expired", 0),
         "last_error": get_setting("pipeline_last_error"),
+        "last_ingest_by_source": get_setting("pipeline_last_ingest_by_source", {}),
+        "news_sources": _active_news_sources(),
     }
+
+
+def _active_news_sources() -> list[dict]:
+    from config import FINNHUB_KEY, RSS_FEEDS, SEC_EDGAR_8K_FEED
+
+    sources = [{"name": name, "type": "rss", "enabled": True} for name, _ in RSS_FEEDS]
+    sources.append({"name": SEC_EDGAR_8K_FEED[0], "type": "rss", "enabled": True})
+    sources.append({
+        "name": "Finnhub (general + company)",
+        "type": "api",
+        "enabled": bool(FINNHUB_KEY),
+        "hint": None if FINNHUB_KEY else "Set FINNHUB_KEY on Railway for stock news API",
+    })
+    return sources
 
 
 def _save_cycle_stats(
@@ -35,12 +51,15 @@ def _save_cycle_stats(
     drafts_created: int = 0,
     expired: int = 0,
     error: str | None = None,
+    ingest_by_source: dict | None = None,
 ) -> None:
     set_setting("pipeline_last_run_at", datetime.utcnow().isoformat())
     set_setting("pipeline_last_ingest_count", ingest_count)
     set_setting("pipeline_last_drafts_created", drafts_created)
     set_setting("pipeline_last_expired", expired)
     set_setting("pipeline_last_error", error)
+    if ingest_by_source is not None:
+        set_setting("pipeline_last_ingest_by_source", ingest_by_source)
 
 
 async def run_pipeline_cycle() -> dict:
@@ -74,7 +93,7 @@ async def run_pipeline_cycle() -> dict:
 
         logger.info("Pipeline cycle starting")
         expired = expire_stale_drafts()
-        ingest_count = ingest_headlines()
+        ingest_count, ingest_by_source = ingest_headlines()
         headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE)
         if headlines:
             filtered = filter_headlines(headlines)
@@ -86,6 +105,7 @@ async def run_pipeline_cycle() -> dict:
             ingest_count=ingest_count,
             drafts_created=drafts_created,
             expired=expired,
+            ingest_by_source=ingest_by_source,
         )
         logger.info(
             "Pipeline cycle complete (ingested=%d, drafts=%d, expired=%d)",

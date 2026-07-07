@@ -391,6 +391,20 @@ async function loadSettings() {
 
     const cfg = data.config || {};
     const pipe = data.pipeline || {};
+    const sources = pipe.news_sources || [];
+    document.getElementById('news-sources').innerHTML = sources.map((s) => `
+      <div class="status-row">
+        <span>${esc(s.name)}</span>
+        <span class="${s.enabled ? 'status-ok' : 'status-no'}">${s.enabled ? 'On' : 'Off'}</span>
+      </div>
+      ${s.hint ? `<p class="source-hint">${esc(s.hint)}</p>` : ''}`).join('');
+
+    const bySource = pipe.last_ingest_by_source || {};
+    const sourceDetail = Object.entries(bySource)
+      .filter(([, n]) => n > 0)
+      .map(([name, n]) => `${name}: ${n}`)
+      .join(' · ');
+
     const items = [
       { label: 'Dry run', on: cfg.dry_run },
       { label: 'Anthropic', on: cfg.anthropic_configured },
@@ -414,6 +428,7 @@ async function loadSettings() {
         <span>New headlines</span>
         <span>${pipe.last_ingest_count ?? 0}</span>
       </div>
+      ${sourceDetail ? `<div class="pipeline-sources">${esc(sourceDetail)}</div>` : ''}
       <div class="status-row">
         <span>Drafts created</span>
         <span>${pipe.last_drafts_created ?? 0}</span>

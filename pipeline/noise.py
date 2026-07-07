@@ -47,7 +47,7 @@ def is_obvious_noise(headline: Headline) -> str | None:
     if len(headline.title) < 20 and headline.source not in ("SEC EDGAR 8-K",):
         return "title too short/vague"
 
-    if headline.source in SOFT_SOURCES and not TRADE_SIGNALS.search(text):
+    if headline.source.startswith("Finnhub") and not TRADE_SIGNALS.search(text):
         return "no trade signal"
 
     return None

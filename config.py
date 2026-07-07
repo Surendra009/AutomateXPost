@@ -29,12 +29,23 @@ MAX_DRAFTS_PER_CYCLE = 2
 MIN_RELEVANCE_SCORE = 0.75
 STALE_DRAFT_HOURS = 4  # pending drafts older than this are auto-removed
 
-# Focused feeds — removed noisy general tech blogs
+# Market news RSS feeds (Reuters feed is deprecated/broken — use alternatives below)
 RSS_FEEDS = [
     ("CNBC Markets", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"),
-    ("Reuters Business", "https://feeds.reuters.com/reuters/businessNews"),
-    ("SEC EDGAR 8-K", "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-k&company=&dateb=&owner=include&count=40&output=atom"),
+    ("Bloomberg Markets", "https://feeds.bloomberg.com/markets/news.rss"),
+    ("WSJ Markets", "https://feeds.a.dj.com/rss/RSSMarketsMain.xml"),
+    ("MarketWatch", "https://feeds.marketwatch.com/marketwatch/topstories/"),
+    ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
+    ("Seeking Alpha", "https://seekingalpha.com/market_currents.xml"),
+    ("Financial Times", "https://www.ft.com/rss/home"),
 ]
+
+# SEC Atom feed requires a User-Agent with contact info (SEC policy)
+SEC_EDGAR_8K_FEED = (
+    "SEC EDGAR 8-K",
+    "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-k&company=&dateb=&owner=include&count=40&output=atom",
+)
+SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "PostPilot/1.0 (automated news bot)")
 
 DEFAULT_SETTINGS = {
     "pipeline_enabled": True,
