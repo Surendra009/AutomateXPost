@@ -71,7 +71,13 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
     document.querySelectorAll('.tab-screen').forEach((s) => s.classList.add('hidden'));
     document.getElementById(`${currentTab}-screen`).classList.remove('hidden');
     const titles = { queue: 'Queue', history: 'History', settings: 'Settings' };
+    const subtitles = {
+      queue: 'Pending drafts',
+      history: 'Posted & rejected',
+      settings: 'Pipeline & limits',
+    };
     document.getElementById('screen-title').textContent = titles[currentTab];
+    document.getElementById('header-subtitle').textContent = subtitles[currentTab];
     loadCurrentTab();
   });
 });
@@ -133,12 +139,15 @@ function renderQueue(drafts) {
 }
 
 function renderDraftCard(d) {
-  const tickers = d.tickers.length ? d.tickers.map((t) => `$${t}`).join(' ') : '';
   const confPct = Math.round(d.confidence * 100);
   const isEditing = editingDraftId === d.id;
-  const charCount = isEditing ? '' : '';
+  const formatClass = (d.format || 'CONTEXT').toLowerCase();
   const sourceLink = d.headline
     ? `<a href="${esc(d.headline.url)}" target="_blank" rel="noopener">${esc(d.headline.source)}</a>`
+    : '';
+
+  const tickerTags = d.tickers.length
+    ? d.tickers.map((t) => `<span class="tag tag-ticker">$${esc(t)}</span>`).join('')
     : '';
 
   let actions;
@@ -146,36 +155,52 @@ function renderDraftCard(d) {
     actions = `
       <textarea class="edit-area" id="edit-${d.id}" maxlength="500">${esc(d.text)}</textarea>
       <div class="char-counter" id="counter-${d.id}">${d.text.length}/280</div>
-      <div class="card-actions">
-        <button class="btn btn-success" data-action="approve-edit" data-id="${d.id}">Approve Edited</button>
+      <div class="card-actions editing">
+        <button class="btn btn-success" data-action="approve-edit" data-id="${d.id}">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+          Approve
+        </button>
         <button class="btn btn-secondary" data-action="cancel-edit" data-id="${d.id}">Cancel</button>
       </div>`;
   } else {
     actions = `
       <div class="card-actions">
-        <button class="btn btn-success" data-action="approve" data-id="${d.id}">Approve</button>
-        <button class="btn btn-danger" data-action="reject" data-id="${d.id}">Reject</button>
-        <button class="btn btn-edit" data-action="edit" data-id="${d.id}">Edit</button>
+        <button class="btn btn-success" data-action="approve" data-id="${d.id}">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+          Approve
+        </button>
+        <button class="btn btn-danger" data-action="reject" data-id="${d.id}">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          Reject
+        </button>
+        <button class="btn btn-edit" data-action="edit" data-id="${d.id}" aria-label="Edit">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
       </div>`;
   }
 
   return `
-    <div class="draft-card" data-id="${d.id}">
-      <div class="draft-meta">
-        <span class="tag tag-format">${esc(d.format)}</span>
-        <span class="tag tag-impact-${d.impact}">${esc(d.impact)}</span>
-        <span class="tag tag-category">${esc(d.category)}</span>
-        ${tickers ? `<span class="tag tag-category">${esc(tickers)}</span>` : ''}
+    <article class="draft-card impact-${esc(d.impact)}" data-id="${d.id}">
+      <div class="draft-top">
+        <div class="draft-meta">
+          <span class="tag tag-format tag-format-${formatClass}">${esc(d.format)}</span>
+          <span class="tag tag-impact-${esc(d.impact)}">${esc(d.impact)}</span>
+          <span class="tag tag-category">${esc(d.category)}</span>
+          ${tickerTags}
+        </div>
+        <span class="draft-age">${esc(d.age)}</span>
       </div>
-      ${isEditing ? '' : `<div class="draft-text">${esc(d.text)}</div>`}
-      <div class="draft-source">${sourceLink}</div>
-      <div class="draft-info">
-        <span>Confidence: ${confPct}%</span>
-        <span>${esc(d.age)}</span>
+      ${isEditing ? '' : `<div class="draft-text format-${formatClass}">${esc(d.text)}</div>`}
+      ${sourceLink ? `<div class="draft-source">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6M10 14L21 3"/></svg>
+        ${sourceLink}
+      </div>` : ''}
+      <div class="confidence-row">
+        <div class="confidence-bar"><div class="confidence-fill" style="width:${confPct}%"></div></div>
+        <span class="confidence-label">${confPct}%</span>
       </div>
-      <div class="confidence-bar"><div class="confidence-fill" style="width:${confPct}%"></div></div>
       ${actions}
-    </div>`;
+    </article>`;
 }
 
 function attachCardListeners() {
@@ -278,8 +303,12 @@ async function loadHistory() {
 }
 
 function renderHistory(data) {
-  document.getElementById('stats-bar').textContent =
-    `Today: ${data.stats.posted_today}/${data.stats.daily_cap} posted`;
+  const posted = data.stats.posted_today;
+  const cap = data.stats.daily_cap;
+  const pct = Math.min(100, Math.round((posted / cap) * 100));
+
+  document.getElementById('stats-value').textContent = `${posted} / ${cap}`;
+  document.getElementById('stats-ring').style.setProperty('--progress', `${pct}%`);
 
   const postedList = document.getElementById('posted-list');
   const postedEmpty = document.getElementById('posted-empty');
@@ -288,15 +317,22 @@ function renderHistory(data) {
     postedList.innerHTML = data.posted.map((p) => `
       <div class="history-card">
         <div class="draft-text">${esc(p.text)}</div>
-        <div class="history-time">${formatDate(p.posted_at)}</div>
-        ${p.tweet_url ? `<a href="${esc(p.tweet_url)}" target="_blank" rel="noopener">View on X</a>` : '<span class="muted">Dry run</span>'}
+        <div class="history-footer">
+          <span class="history-time">${formatDate(p.posted_at)}</span>
+          ${p.tweet_url
+            ? `<a class="history-link" href="${esc(p.tweet_url)}" target="_blank" rel="noopener">
+                View on X
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6M10 14L21 3"/></svg>
+              </a>`
+            : '<span class="muted">Dry run</span>'}
+        </div>
       </div>`).join('');
   } else {
     postedList.innerHTML = '';
     postedEmpty.classList.remove('hidden');
   }
 
-  document.getElementById('rejected-count').textContent = `(${data.rejected.length})`;
+  document.getElementById('rejected-count').textContent = data.rejected.length;
   const rejectedList = document.getElementById('rejected-list');
   rejectedList.innerHTML = data.rejected.map((r) => `
     <div class="rejected-card">
@@ -326,17 +362,24 @@ async function loadSettings() {
     const pauseEl = document.getElementById('pause-status');
     if (data.paused_until) {
       pauseEl.textContent = `Paused until ${formatDate(data.paused_until)}`;
+      pauseEl.classList.remove('hidden');
     } else {
       pauseEl.textContent = '';
+      pauseEl.classList.add('hidden');
     }
 
     const cfg = data.config || {};
-    document.getElementById('config-info').innerHTML = [
-      `Dry run: ${cfg.dry_run ? 'ON' : 'OFF'}`,
-      `Anthropic: ${cfg.anthropic_configured ? 'configured' : 'not set'}`,
-      `X API: ${cfg.x_configured ? 'configured' : 'not set'}`,
-      `Finnhub: ${cfg.finnhub_configured ? 'configured' : 'not set'}`,
-    ].join('<br>');
+    const items = [
+      { label: 'Dry run', on: cfg.dry_run },
+      { label: 'Anthropic', on: cfg.anthropic_configured },
+      { label: 'X API', on: cfg.x_configured },
+      { label: 'Finnhub', on: cfg.finnhub_configured },
+    ];
+    document.getElementById('config-info').innerHTML = items.map((i) => `
+      <div class="status-pill">
+        <span class="status-dot ${i.on ? 'on' : 'off'}"></span>
+        ${esc(i.label)}
+      </div>`).join('');
   } catch (err) {
     showToast(err.message, 'error');
   }

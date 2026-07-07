@@ -3,120 +3,170 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
-  <meta name="theme-color" content="#0d1117">
+  <meta name="theme-color" content="#09090b">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>PostPilot</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-  <!-- Login Screen -->
+  <!-- Login -->
   <div id="login-screen" class="screen hidden">
+    <div class="login-bg"></div>
     <div class="login-container">
       <div class="logo">
-        <div class="logo-icon">&#9992;</div>
+        <div class="logo-mark">
+          <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><path d="M16 4L26 18H20L22 28L10 14H16L16 4Z" fill="currentColor"/></svg>
+        </div>
         <h1>PostPilot</h1>
-        <p class="subtitle">Market news approval</p>
+        <p class="subtitle">Review &amp; approve market posts</p>
       </div>
-      <form id="login-form">
-        <input type="password" id="password-input" placeholder="Password" autocomplete="current-password" required>
-        <button type="submit" class="btn btn-primary btn-full">Sign In</button>
+      <form id="login-form" class="login-card">
+        <label for="password-input" class="input-label">Password</label>
+        <input type="password" id="password-input" placeholder="Enter your password" autocomplete="current-password" required>
+        <button type="submit" class="btn btn-primary btn-full">
+          <span>Sign in</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        </button>
       </form>
       <p id="login-error" class="error hidden"></p>
     </div>
   </div>
 
-  <!-- Main App -->
+  <!-- App -->
   <div id="app" class="screen hidden">
     <header class="app-header">
-      <h1 id="screen-title">Queue</h1>
-      <span id="queue-badge" class="badge hidden">0</span>
+      <div class="header-left">
+        <div class="header-logo">
+          <svg width="20" height="20" viewBox="0 0 32 32" fill="none"><path d="M16 4L26 18H20L22 28L10 14H16L16 4Z" fill="currentColor"/></svg>
+        </div>
+        <div>
+          <h1 id="screen-title">Queue</h1>
+          <p id="header-subtitle" class="header-subtitle">Pending drafts</p>
+        </div>
+      </div>
+      <span id="queue-badge" class="header-badge hidden">0</span>
     </header>
 
     <main id="main-content">
       <!-- Queue -->
       <div id="queue-screen" class="tab-screen">
-        <div id="pull-indicator" class="pull-indicator hidden">Release to refresh</div>
+        <div id="pull-indicator" class="pull-indicator hidden">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
+          Release to refresh
+        </div>
         <div id="queue-list" class="card-list"></div>
         <div id="queue-empty" class="empty-state hidden">
-          <p>No pending drafts</p>
-          <p class="muted">New drafts appear here when the pipeline runs</p>
+          <div class="empty-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 12h6M12 9v6"/></svg>
+          </div>
+          <p class="empty-title">All clear</p>
+          <p class="empty-desc">New drafts will appear here when the pipeline runs</p>
         </div>
       </div>
 
       <!-- History -->
       <div id="history-screen" class="tab-screen hidden">
-        <div class="stats-bar" id="stats-bar">Today: 0/20 posted</div>
+        <div class="stats-card" id="stats-bar">
+          <div class="stats-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+          <div class="stats-content">
+            <span class="stats-label">Today's posts</span>
+            <span class="stats-value" id="stats-value">0 / 20</span>
+          </div>
+          <div class="stats-ring" id="stats-ring"></div>
+        </div>
+
         <h2 class="section-title">Posted</h2>
         <div id="posted-list" class="card-list"></div>
-        <div id="posted-empty" class="empty-state hidden"><p>No posts yet</p></div>
-        <h2 class="section-title collapsible" id="rejected-toggle">
-          Rejected <span id="rejected-count">(0)</span> <span class="chevron">&#9660;</span>
-        </h2>
+        <div id="posted-empty" class="empty-state compact hidden">
+          <p class="empty-desc">No posts yet</p>
+        </div>
+
+        <button class="section-toggle" id="rejected-toggle" type="button">
+          <span>Rejected</span>
+          <span id="rejected-count" class="section-count">0</span>
+          <svg class="chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
         <div id="rejected-list" class="card-list collapsed"></div>
       </div>
 
       <!-- Settings -->
       <div id="settings-screen" class="tab-screen hidden">
-        <div class="settings-group">
-          <label class="setting-row">
-            <span>Pipeline</span>
-            <input type="checkbox" id="pipeline-toggle" class="toggle">
-          </label>
+        <div class="settings-card">
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Pipeline</span>
+              <span class="setting-desc">Auto-ingest and draft news</span>
+            </div>
+            <input type="checkbox" id="pipeline-toggle" class="toggle" aria-label="Pipeline enabled">
+          </div>
         </div>
-        <div class="settings-group">
-          <label class="setting-label">Daily post cap</label>
+
+        <div class="settings-card">
+          <label class="setting-label" for="daily-cap">Daily post cap</label>
           <input type="number" id="daily-cap" class="input" min="1" max="50" value="20">
         </div>
-        <div class="settings-group">
-          <label class="setting-label">Cooldown (minutes)</label>
-          <input type="number" id="cooldown" class="input" min="1" max="60" value="5">
+
+        <div class="settings-card">
+          <label class="setting-label" for="cooldown">Cooldown between posts</label>
+          <div class="input-with-suffix">
+            <input type="number" id="cooldown" class="input" min="1" max="60" value="5">
+            <span class="input-suffix">min</span>
+          </div>
         </div>
-        <div class="settings-group">
+
+        <div class="settings-card">
           <label class="setting-label">Watchlist tickers</label>
+          <p class="setting-hint">Prioritize news mentioning these symbols</p>
           <div id="watchlist-chips" class="chips"></div>
           <div class="chip-input-row">
-            <input type="text" id="watchlist-input" class="input" placeholder="e.g. NVDA" maxlength="5">
-            <button id="add-ticker" class="btn btn-secondary">Add</button>
+            <input type="text" id="watchlist-input" class="input" placeholder="NVDA" maxlength="5">
+            <button id="add-ticker" class="btn btn-secondary btn-icon" type="button" aria-label="Add ticker">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
           </div>
         </div>
-        <div class="settings-group">
+
+        <div class="settings-card">
           <label class="setting-label">Pause pipeline</label>
           <div class="btn-row">
-            <button class="btn btn-secondary pause-btn" data-hours="1">1 hour</button>
-            <button class="btn btn-secondary pause-btn" data-hours="4">4 hours</button>
-            <button class="btn btn-secondary pause-btn" data-tomorrow="1">Tomorrow</button>
+            <button class="btn btn-ghost pause-btn" data-hours="1" type="button">1 hour</button>
+            <button class="btn btn-ghost pause-btn" data-hours="4" type="button">4 hours</button>
+            <button class="btn btn-ghost pause-btn" data-tomorrow="1" type="button">Tomorrow</button>
           </div>
-          <p id="pause-status" class="muted"></p>
+          <p id="pause-status" class="pause-status hidden"></p>
         </div>
-        <div class="settings-group">
-          <button id="save-settings" class="btn btn-primary btn-full">Save Settings</button>
-        </div>
-        <div class="settings-footer muted" id="config-info"></div>
+
+        <button id="save-settings" class="btn btn-primary btn-full" type="button">Save settings</button>
+
+        <div class="status-grid" id="config-info"></div>
       </div>
     </main>
 
-    <!-- Bottom Nav -->
     <nav class="bottom-nav">
-      <button class="nav-btn active" data-tab="queue">
-        <span class="nav-icon">&#128203;</span>
+      <button class="nav-btn active" data-tab="queue" type="button">
+        <svg class="nav-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
         <span>Queue</span>
         <span id="nav-badge" class="nav-badge hidden">0</span>
       </button>
-      <button class="nav-btn" data-tab="history">
-        <span class="nav-icon">&#128337;</span>
+      <button class="nav-btn" data-tab="history" type="button">
+        <svg class="nav-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
         <span>History</span>
       </button>
-      <button class="nav-btn" data-tab="settings">
-        <span class="nav-icon">&#9881;</span>
+      <button class="nav-btn" data-tab="settings" type="button">
+        <svg class="nav-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
         <span>Settings</span>
       </button>
     </nav>
   </div>
 
-  <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
 
   <script src="/static/js/app.js"></script>
