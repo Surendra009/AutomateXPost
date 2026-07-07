@@ -17,13 +17,16 @@ FILTER_SYSTEM_PROMPT = (
     "return strict JSON: {relevant: bool, tickers: [], "
     "impact: 'high'|'med'|'low', category: 'earnings'|'macro'|'ai'|"
     "'geopolitics'|'ipo'|'regulatory'|'other', angle: '<one sentence "
-    "why traders care>'}. relevant=true only if it could move a stock, "
+    "why traders care>', key_facts: ['<specific fact with number if any>', "
+    "'<second fact>']}. relevant=true only if it could move a stock, "
     "sector, or index, or is major AI industry news. Opinion pieces "
-    "and PR fluff are false. JSON array only."
+    "and PR fluff are false. Extract 2-4 concrete facts (numbers, names, "
+    "comparisons to estimates) from the summary — not just the headline. "
+    "JSON array only."
 )
 
 
-def _call_claude(system: str, user: str, model: str, retry: bool = True) -> str | None:
+def _call_claude(system: str, user: str, model: str, retry: bool = True, max_tokens: int = 4096) -> str | None:
     if not ANTHROPIC_API_KEY:
         logger.warning("ANTHROPIC_API_KEY not set, skipping filter")
         return None
@@ -34,7 +37,7 @@ def _call_claude(system: str, user: str, model: str, retry: bool = True) -> str 
     try:
         message = client.messages.create(
             model=model,
-            max_tokens=4096,
+            max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -43,7 +46,7 @@ def _call_claude(system: str, user: str, model: str, retry: bool = True) -> str 
         logger.error("Claude API error: %s", e)
         if retry:
             logger.info("Retrying Claude call once...")
-            return _call_claude(system, user, model, retry=False)
+            return _call_claude(system, user, model, retry=False, max_tokens=max_tokens)
         return None
 
 

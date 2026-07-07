@@ -301,11 +301,9 @@ body {
 }
 
 .post-text.is-breaking {
-  font-size: 16px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-  line-height: 1.4;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.45;
 }
 
 .post-text.is-summary {
