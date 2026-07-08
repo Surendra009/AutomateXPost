@@ -6,15 +6,15 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
-from config import DEFAULT_FINNHUB_TICKERS, MAX_COMPANY_NEWS_DRAFTS_PER_CYCLE
+from config import MAX_COMPANY_NEWS_DRAFTS_PER_CYCLE
 from database import get_setting
 from logging_config import setup_logging
 from pipeline.draft_budget import DraftBudget
-from pipeline.earnings import DEFAULT_EARNINGS_SYMBOLS
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key, parse_finnhub_timestamp
 from pipeline.freshness import is_fresh
 from pipeline.noise import is_title_noise
 from pipeline.structured_common import content_hash, save_structured_draft
+from pipeline.watchlist_scope import normalized_watchlist
 
 logger = setup_logging()
 
@@ -42,13 +42,6 @@ DEAL = re.compile(
 _PAREN_TICKER = re.compile(r"\(([A-Z]{1,5})\)")
 
 
-def _in_scope(symbol: str, watchlist: list[str]) -> bool:
-    sym = symbol.upper()
-    if watchlist:
-        return sym in {w.upper() for w in watchlist}
-    return sym in DEFAULT_EARNINGS_SYMBOLS
-
-
 def _fetch_company_news(symbol: str, from_date: str, to_date: str) -> list[dict[str, Any]]:
     data, err = finnhub_get(
         "company-news",
@@ -66,7 +59,7 @@ def _parenthetical_ticker(headline: str) -> str | None:
 
 
 def _ticker_matches_headline(ticker: str, headline: str) -> bool:
-    """Reject when the headline's subject ticker differs (e.g. MSFT piece tagged NVDA)."""
+    """Reject when a parenthetical subject ticker differs from the assigned ticker."""
     subject = _parenthetical_ticker(headline)
     if subject and subject != ticker.upper():
         return False
@@ -126,7 +119,10 @@ def process_company_news(budget: DraftBudget | None = None) -> tuple[int, int]:
         return 0, 0
 
     watchlist = get_setting("watchlist", [])
-    symbols = watchlist or DEFAULT_FINNHUB_TICKERS
+    symbols = normalized_watchlist(watchlist)[:15]
+    if not symbols:
+        return 0, 0
+
     today = datetime.utcnow().date()
     from_date = (today - timedelta(days=1)).isoformat()
     to_date = today.isoformat()
@@ -141,7 +137,7 @@ def process_company_news(budget: DraftBudget | None = None) -> tuple[int, int]:
         if drafts_created >= MAX_COMPANY_NEWS_DRAFTS_PER_CYCLE:
             break
         symbol = symbol.upper().strip()
-        if not symbol or not _in_scope(symbol, watchlist):
+        if not symbol:
             continue
 
         for item in _fetch_company_news(symbol, from_date, to_date)[:12]:

@@ -91,9 +91,6 @@ SEC_EDGAR_8K_FEED = (
 )
 SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "PostPilot/1.0 (automated news bot)")
 
-# Default tickers for Finnhub company news when watchlist is empty
-DEFAULT_FINNHUB_TICKERS = ["NVDA", "MSFT", "GOOGL", "META", "AMZN", "AAPL", "TSLA", "AMD"]
-
 DEFAULT_SETTINGS = {
     "pipeline_enabled": True,
     "daily_post_cap": 20,
