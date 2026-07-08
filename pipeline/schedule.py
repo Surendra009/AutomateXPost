@@ -153,8 +153,28 @@ def schedule_status(now: datetime | None = None) -> dict:
         "weekend_run_due": weekend_run_due(now) if is_weekend(now) else None,
         "quiet_hours": is_overnight_quiet_hours(now),
         "quiet_window": f"{OVERNIGHT_QUIET_START_HOUR}:00–{OVERNIGHT_QUIET_END_HOUR}:00",
+        "market_hours": is_market_hours(now),
+        "pipeline_interval_seconds": pipeline_interval_seconds(now),
         "next_mode": decision.mode if decision.run else "skipped",
         "schedule_reason": decision.reason,
         "catchup_completed_today": catchup_completed_today(now),
         "last_overnight_catchup_at": get_setting(CATCHUP_SETTING_KEY),
     }
+
+
+def is_market_hours(now: datetime | None = None) -> bool:
+    """US market session window (premarket through close, Mon–Fri)."""
+    from config import MARKET_CLOSE_HOUR, PREMARKET_START_HOUR
+
+    now = now or local_now()
+    if now.weekday() >= 5:
+        return False
+    return PREMARKET_START_HOUR <= now.hour < MARKET_CLOSE_HOUR
+
+
+def pipeline_interval_seconds(now: datetime | None = None) -> int:
+    from config import MARKET_HOURS_INTERVAL_SECONDS, PIPELINE_INTERVAL_SECONDS
+
+    if is_market_hours(now):
+        return MARKET_HOURS_INTERVAL_SECONDS
+    return PIPELINE_INTERVAL_SECONDS

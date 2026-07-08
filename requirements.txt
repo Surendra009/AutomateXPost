@@ -11,3 +11,4 @@ trafilatura>=2.0.0
 Pillow>=10.4.0
 python-multipart>=0.0.12
 itsdangerous>=2.2.0
+pywebpush>=2.0.0

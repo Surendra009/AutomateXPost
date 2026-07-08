@@ -48,9 +48,47 @@ def _migrate_headline_title_fp() -> None:
         pass
 
 
+def _migrate_schema() -> None:
+    """Add columns/tables for existing SQLite DBs."""
+    import sqlite3
+
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    db_path = DATABASE_URL.replace("sqlite:///", "", 1)
+    if not db_path or db_path == DATABASE_URL:
+        return
+
+    alters = [
+        ("drafts", "scheduled_at", "TEXT"),
+        ("drafts", "post_error", "TEXT"),
+        ("posts", "thread_tweet_ids", "TEXT DEFAULT ''"),
+        ("posts", "media_url", "TEXT DEFAULT ''"),
+        ("posts", "like_count", "INTEGER DEFAULT 0"),
+        ("posts", "retweet_count", "INTEGER DEFAULT 0"),
+        ("posts", "reply_count", "INTEGER DEFAULT 0"),
+        ("posts", "impression_count", "INTEGER DEFAULT 0"),
+        ("posts", "metrics_updated_at", "TEXT"),
+    ]
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        for table, column, col_type in alters:
+            cur.execute(f"PRAGMA table_info({table})")
+            columns = {row[1] for row in cur.fetchall()}
+            if column not in columns:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _migrate_headline_title_fp()
+    _migrate_schema()
     with Session(engine) as session:
         for key, value in DEFAULT_SETTINGS.items():
             existing = session.get(AppSetting, key)

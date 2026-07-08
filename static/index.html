@@ -67,6 +67,12 @@
             <div class="stat-bar" id="stats-bar"></div>
           </div>
         </div>
+        <div id="analytics-banner" class="stat-banner hidden">
+          <div>
+            <span class="stat-label">Engagement (recent)</span>
+            <span class="stat-num" id="analytics-totals">—</span>
+          </div>
+        </div>
 
         <h2 class="list-heading">Posted</h2>
         <div id="posted-list" class="list"></div>
@@ -108,6 +114,27 @@
                 <span>min</span>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-label">Posting</div>
+          <div class="group-card">
+            <div class="row row-toggle">
+              <div>
+                <div class="row-title">Allow hashtags</div>
+                <div class="row-desc">One topic tag on macro/earnings posts</div>
+              </div>
+              <input type="checkbox" id="allow-hashtags" class="switch" aria-label="Allow hashtags">
+            </div>
+            <div class="row row-toggle">
+              <div>
+                <div class="row-title">Push notifications</div>
+                <div class="row-desc">Alert when new drafts arrive</div>
+              </div>
+              <input type="checkbox" id="push-enabled" class="switch" aria-label="Push notifications">
+            </div>
+            <button type="button" id="enable-push" class="btn btn-secondary btn-block fetch-btn">Enable push on this device</button>
           </div>
         </div>
 
@@ -154,7 +181,7 @@
           <div class="group-label">News sources</div>
           <div class="group-card">
             <div class="status-list" id="news-sources"></div>
-            <p class="row-desc block muted-note">Headlines come from RSS feeds and Finnhub. Full article text is fetched automatically when drafting.</p>
+            <p class="row-desc block muted-note">Web search (primary), RSS, and optional Finnhub supplement. Articles fetched when drafting.</p>
           </div>
         </div>
 
@@ -200,6 +227,29 @@
         <span>Settings</span>
       </button>
     </nav>
+  </div>
+
+  <div id="reject-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Why reject?</h3>
+      <p class="muted-note">Helps improve future drafts</p>
+      <div id="reject-reasons" class="reason-grid"></div>
+      <button type="button" id="reject-cancel" class="btn btn-secondary btn-block">Cancel</button>
+    </div>
+  </div>
+
+  <div id="schedule-modal" class="modal hidden">
+    <div class="modal-card">
+      <h3>Schedule post</h3>
+      <input type="datetime-local" id="schedule-input" class="input">
+      <div class="schedule-quick">
+        <button type="button" class="btn btn-secondary schedule-quick-btn" data-minutes="15">+15 min</button>
+        <button type="button" class="btn btn-secondary schedule-quick-btn" data-minutes="30">+30 min</button>
+        <button type="button" class="btn btn-secondary schedule-quick-btn" data-minutes="60">+1 hour</button>
+      </div>
+      <button type="button" id="schedule-confirm" class="btn btn-approve btn-block">Schedule</button>
+      <button type="button" id="schedule-cancel" class="btn btn-secondary btn-block">Cancel</button>
+    </div>
   </div>
 
   <div id="toast" class="toast hidden"></div>

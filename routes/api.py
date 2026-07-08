@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlmodel import select
+from sqlmodel import select, or_
 
 from auth import (
     authenticate,
@@ -14,13 +14,17 @@ from auth import (
     require_auth,
     set_session_cookie,
 )
+from config import REJECTION_REASONS
 from database import get_all_settings, get_session, get_setting, set_setting
 from logging_config import setup_logging
 from models import Draft, Headline, Post
-from pipeline.post import PostingError, get_today_stats, publish_draft
+from pipeline.analytics import analytics_summary, refresh_post_metrics
+from pipeline.draft import regenerate_draft
 from pipeline.feedback import record_rejection
 from pipeline.freshness import discard_stale_headlines, format_age, age_minutes, is_fresh
 from pipeline.finnhub_api import test_finnhub_connection
+from pipeline.post import PostingError, publish_draft
+from pipeline.push import get_vapid_public_key, push_configured, remove_subscription, save_subscription
 from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
 from pipeline.dedup_mode import DEDUP_MODE_LABELS, get_dedup_mode
 from pipeline.queue_dedup import dedupe_pending_drafts
@@ -36,6 +40,17 @@ class LoginRequest(BaseModel):
 
 class ApproveRequest(BaseModel):
     text: Optional[str] = None
+    scheduled_at: Optional[str] = None  # ISO datetime — post later
+
+
+class RejectRequest(BaseModel):
+    reason: str = "other"
+    note: Optional[str] = None
+
+
+class PushSubscribeRequest(BaseModel):
+    endpoint: str
+    keys: dict
 
 
 class SettingsPatch(BaseModel):
@@ -45,6 +60,8 @@ class SettingsPatch(BaseModel):
     watchlist: Optional[list[str]] = None
     paused_until: Optional[str] = None
     dedup_mode: Optional[str] = None
+    allow_hashtags: Optional[bool] = None
+    push_enabled: Optional[bool] = None
 
 
 def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
@@ -62,6 +79,8 @@ def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
         "tickers": draft.tickers.split(",") if draft.tickers else [],
         "confidence": draft.confidence,
         "status": draft.status,
+        "scheduled_at": draft.scheduled_at.isoformat() if draft.scheduled_at else None,
+        "post_error": draft.post_error,
         "created_at": draft.created_at.isoformat(),
         "age": format_age(draft.created_at),
         "draft_age_minutes": draft_mins,
@@ -111,7 +130,7 @@ def get_queue(request: Request):
         drafts = list(
             session.exec(
                 select(Draft)
-                .where(Draft.status == "pending")
+                .where(or_(Draft.status == "pending", Draft.status == "scheduled"))
                 .order_by(Draft.created_at.desc())
             ).all()
         )
@@ -123,18 +142,22 @@ def get_queue(request: Request):
 
         from pipeline.dedup_mode import dedup_at_queue
 
-        if dedup_at_queue() and drafts:
-            pairs, hidden_duplicates = dedupe_pending_drafts(drafts, headlines)
+        pending_only = [d for d in drafts if d.status == "pending"]
+        if dedup_at_queue() and pending_only:
+            pairs, hidden_duplicates = dedupe_pending_drafts(pending_only, headlines)
+            scheduled = [(d, headlines[d.headline_id]) for d in drafts if d.status == "scheduled"]
+            pairs = scheduled + pairs
         else:
-            pairs = [(d, headlines[d.headline_id]) for d in drafts if d.headline_id in headlines]
+            pairs = [(d, headlines.get(d.headline_id)) for d in drafts if d.headline_id in headlines]
 
-        result = [_draft_to_dict(d, h) for d, h in pairs]
+        result = [_draft_to_dict(d, h) for d, h in pairs if h]
 
     return {
         "drafts": result,
         "count": len(result),
         "dedup_mode": get_dedup_mode(),
         "hidden_duplicates": hidden_duplicates,
+        "rejection_reasons": list(REJECTION_REASONS),
     }
 
 
@@ -148,41 +171,82 @@ def approve_draft(draft_id: int, request: Request, body: ApproveRequest = Approv
         draft = session.get(Draft, draft_id)
         if not draft:
             raise HTTPException(status_code=404, detail="Draft not found")
-        if draft.status != "pending":
+        if draft.status not in ("pending", "scheduled"):
             raise HTTPException(status_code=400, detail=f"Draft is {draft.status}, not pending")
+
+        if body.text:
+            draft.text = body.text
+
+        if body.scheduled_at:
+            try:
+                sched = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+                if sched.tzinfo:
+                    sched = sched.replace(tzinfo=None) - sched.utcoffset()
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="Invalid scheduled_at") from exc
+            if sched <= datetime.utcnow():
+                raise HTTPException(status_code=400, detail="scheduled_at must be in the future")
+            draft.status = "scheduled"
+            draft.scheduled_at = sched
+            draft.post_error = None
+            session.add(draft)
+            session.commit()
+            return {"ok": True, "scheduled": True, "scheduled_at": sched.isoformat()}
 
     try:
         post = publish_draft(draft, text=body.text, daily_cap=daily_cap, cooldown_minutes=cooldown)
         return {
             "ok": True,
             "tweet_id": post.tweet_id,
+            "thread_count": len(post.thread_tweet_ids.split(",")) if post.thread_tweet_ids else 1,
             "tweet_url": f"https://x.com/i/status/{post.tweet_id}" if not post.tweet_id.startswith("dry_run") else None,
         }
     except PostingError as e:
+        with get_session() as session:
+            row = session.get(Draft, draft_id)
+            if row:
+                row.post_error = str(e)
+                session.add(row)
+                session.commit()
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/drafts/{draft_id}/reject")
-def reject_draft(draft_id: int, request: Request):
+def reject_draft(draft_id: int, request: Request, body: RejectRequest = RejectRequest()):
     require_auth(request)
+    if body.reason not in REJECTION_REASONS:
+        raise HTTPException(status_code=400, detail="Invalid rejection reason")
     with get_session() as session:
         draft = session.get(Draft, draft_id)
         if not draft:
             raise HTTPException(status_code=404, detail="Draft not found")
-        if draft.status != "pending":
+        if draft.status not in ("pending", "scheduled"):
             raise HTTPException(status_code=400, detail=f"Draft is {draft.status}, not pending")
         draft.status = "rejected"
+        draft.scheduled_at = None
         session.add(draft)
         session.commit()
 
-    record_rejection(draft_id)
+    record_rejection(draft_id, reason=body.reason, note=body.note or "")
     return {"ok": True}
+
+
+@router.post("/drafts/{draft_id}/regenerate")
+def regenerate_draft_route(draft_id: int, request: Request):
+    require_auth(request)
+    draft = regenerate_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=400, detail="Could not regenerate draft")
+    with get_session() as session:
+        headline = session.get(Headline, draft.headline_id)
+    return {"ok": True, "draft": _draft_to_dict(draft, headline)}
 
 
 @router.get("/history")
 def get_history(request: Request):
     require_auth(request)
     stats = get_today_stats()
+    metrics = analytics_summary()
 
     with get_session() as session:
         posted_drafts = session.exec(
@@ -200,6 +264,9 @@ def get_history(request: Request):
                 "posted_at": post.posted_at.isoformat(),
                 "tweet_id": post.tweet_id,
                 "tweet_url": f"https://x.com/i/status/{post.tweet_id}" if not post.tweet_id.startswith("dry_run") else None,
+                "likes": post.like_count,
+                "retweets": post.retweet_count,
+                "thread_count": len(post.thread_tweet_ids.split(",")) if post.thread_tweet_ids else 1,
             })
 
         rejected = session.exec(
@@ -218,6 +285,7 @@ def get_history(request: Request):
         "posted": posted,
         "rejected": rejected_list,
         "stats": stats,
+        "analytics": metrics,
     }
 
 
@@ -229,7 +297,33 @@ def get_settings_route(request: Request):
     settings["config"] = app_config()
     settings["pipeline"] = get_pipeline_status()
     settings["finnhub"] = get_pipeline_status().get("finnhub") or {}
+    settings["push"] = {
+        "configured": push_configured(),
+        "public_key": get_vapid_public_key() if push_configured() else None,
+    }
     return settings
+
+
+@router.get("/push/vapid-public-key")
+def push_vapid_key(request: Request):
+    require_auth(request)
+    if not push_configured():
+        raise HTTPException(status_code=503, detail="Push not configured (set VAPID keys)")
+    return {"public_key": get_vapid_public_key()}
+
+
+@router.post("/push/subscribe")
+def push_subscribe(request: Request, body: PushSubscribeRequest):
+    require_auth(request)
+    save_subscription(body.endpoint, body.keys.get("p256dh", ""), body.keys.get("auth", ""))
+    return {"ok": True}
+
+
+@router.post("/push/unsubscribe")
+def push_unsubscribe(request: Request, body: PushSubscribeRequest):
+    require_auth(request)
+    remove_subscription(body.endpoint)
+    return {"ok": True}
 
 
 @router.get("/pipeline/status")
@@ -257,6 +351,13 @@ async def pipeline_run(request: Request):
     return await run_pipeline_cycle(force=True)
 
 
+@router.post("/analytics/refresh")
+def analytics_refresh(request: Request):
+    require_auth(request)
+    updated = refresh_post_metrics()
+    return {"ok": True, "updated": updated, "analytics": analytics_summary()}
+
+
 @router.patch("/settings")
 def patch_settings(request: Request, body: SettingsPatch):
     require_auth(request)
@@ -276,4 +377,8 @@ def patch_settings(request: Request, body: SettingsPatch):
         if body.dedup_mode not in DEDUP_MODES:
             raise HTTPException(status_code=400, detail="dedup_mode must be pipeline, queue, or off")
         set_setting("dedup_mode", body.dedup_mode)
+    if body.allow_hashtags is not None:
+        set_setting("allow_hashtags", body.allow_hashtags)
+    if body.push_enabled is not None:
+        set_setting("push_enabled", body.push_enabled)
     return get_all_settings()

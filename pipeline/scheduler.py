@@ -3,9 +3,19 @@
 import asyncio
 from datetime import datetime
 
-from config import MAX_DRAFTS_PER_CYCLE, MAX_HEADLINES_PER_CYCLE, PIPELINE_INTERVAL_SECONDS
+from config import (
+    MARKET_CLOSE_HOUR,
+    MARKET_HOURS_INTERVAL_SECONDS,
+    MAX_DRAFTS_PER_CYCLE,
+    MAX_HEADLINES_PER_CYCLE,
+    PIPELINE_INTERVAL_SECONDS,
+    PREMARKET_START_HOUR,
+    SCHEDULED_POST_CHECK_SECONDS,
+)
 from database import get_setting, set_setting
 from logging_config import setup_logging
+from pipeline.alerting import check_pipeline_health, send_alert
+from pipeline.analytics import refresh_post_metrics
 from pipeline.company_news import process_company_news
 from pipeline.cycle_context import cycle_max_news_age
 from pipeline.draft import draft_posts
@@ -17,13 +27,23 @@ from pipeline.freshness import discard_stale_headlines
 from pipeline.ingest import get_unfiltered_headlines, ingest_headlines
 from pipeline.macro_calendar import process_macro_calendar
 from pipeline.prioritize import select_diverse_for_drafting, select_headlines_for_filter
-from pipeline.schedule import CATCHUP_SETTING_KEY, evaluate_schedule, local_now, schedule_status
-from pipeline.sec_filings import clear_sec_feed_cache, process_sec_filings
 from pipeline.stale import expire_stale_drafts
+from pipeline.schedule import (
+    CATCHUP_SETTING_KEY,
+    evaluate_schedule,
+    is_market_hours,
+    local_now,
+    pipeline_interval_seconds,
+    schedule_status,
+)
+from pipeline.sec_filings import clear_sec_feed_cache, process_sec_filings
+from pipeline.scheduled_posts import process_scheduled_posts
+from pipeline.push import notify_new_drafts
 
 logger = setup_logging()
 
 _pipeline_task: asyncio.Task | None = None
+_scheduled_task: asyncio.Task | None = None
 _pipeline_running = False
 
 
@@ -45,40 +65,40 @@ def get_pipeline_status() -> dict:
 
 
 def _active_news_sources() -> list[dict]:
-    from config import AI_RSS_FEEDS, RSS_FEEDS
+    from config import AI_RSS_FEEDS, RSS_FEEDS, WEB_SEARCH_ENABLED
     from pipeline.finnhub_api import get_finnhub_key
 
     sources = [{"name": name, "type": "rss", "enabled": True} for name, _ in RSS_FEEDS]
     sources.extend({"name": name, "type": "ai", "enabled": True} for name, _ in AI_RSS_FEEDS)
+    sources.append({
+        "name": "Web Search (Google News)",
+        "type": "search",
+        "enabled": WEB_SEARCH_ENABLED,
+        "hint": "Primary for earnings, mergers, company news",
+    })
     fh_ok = bool(get_finnhub_key())
     sources.append({
         "name": "Finnhub Earnings",
         "type": "api",
         "enabled": fh_ok,
-        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
+        "hint": "Supplement" if fh_ok else "Optional — FINNHUB_KEY",
     })
     sources.append({
         "name": "Finnhub Macro",
         "type": "api",
         "enabled": fh_ok,
-        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
+        "hint": "Supplement" if fh_ok else "Optional — FINNHUB_KEY",
     })
     sources.append({
         "name": "Finnhub Company",
         "type": "api",
         "enabled": fh_ok,
-        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
+        "hint": "Supplement + watchlist" if fh_ok else "Optional — FINNHUB_KEY",
     })
     sources.append({
         "name": "SEC 8-K (structured)",
         "type": "api",
         "enabled": True,
-    })
-    sources.append({
-        "name": "Finnhub general",
-        "type": "api",
-        "enabled": fh_ok,
-        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
     })
     return sources
 
@@ -194,14 +214,23 @@ async def run_pipeline_cycle(*, force: bool = False) -> dict:
                 expired,
                 discarded,
             )
+
+            if budget.created:
+                notify_new_drafts(budget.created)
+
+            check_pipeline_health(budget.created, None)
+            refresh_post_metrics()
+
     except Exception as e:
         logger.error("Pipeline cycle error: %s", e, exc_info=True)
+        send_alert("Pipeline cycle failed", str(e), level="error")
         _save_cycle_stats(
             ingest_count=ingest_count,
             drafts_created=budget.created,
             expired=expired,
             error=str(e),
         )
+        check_pipeline_health(budget.created, str(e))
     finally:
         _pipeline_running = False
 
@@ -209,7 +238,7 @@ async def run_pipeline_cycle(*, force: bool = False) -> dict:
 
 
 async def pipeline_loop(interval: int = 300) -> None:
-    """Run pipeline every `interval` seconds (respects overnight schedule)."""
+    """Run pipeline on a dynamic interval (faster during market hours)."""
     while True:
         decision = evaluate_schedule()
         if decision.run:
@@ -217,21 +246,37 @@ async def pipeline_loop(interval: int = 300) -> None:
         else:
             logger.debug("Pipeline tick skipped: %s", decision.reason)
             set_setting("pipeline_last_schedule_skip", decision.reason)
-        await asyncio.sleep(interval)
+        sleep_s = pipeline_interval_seconds()
+        await asyncio.sleep(sleep_s)
+
+
+async def scheduled_post_loop() -> None:
+    """Check for due scheduled posts every minute."""
+    while True:
+        try:
+            process_scheduled_posts()
+        except Exception as exc:
+            logger.warning("Scheduled post loop error: %s", exc)
+        await asyncio.sleep(SCHEDULED_POST_CHECK_SECONDS)
 
 
 def start_pipeline(interval: int = 300) -> asyncio.Task:
-    global _pipeline_task
+    global _pipeline_task, _scheduled_task
     if _pipeline_task and not _pipeline_task.done():
         return _pipeline_task
     _pipeline_task = asyncio.create_task(pipeline_loop(interval))
-    logger.info("Pipeline started (interval=%ds)", interval)
+    if not _scheduled_task or _scheduled_task.done():
+        _scheduled_task = asyncio.create_task(scheduled_post_loop())
+    logger.info("Pipeline started (base interval=%ds)", interval)
     return _pipeline_task
 
 
 def stop_pipeline() -> None:
-    global _pipeline_task
+    global _pipeline_task, _scheduled_task
     if _pipeline_task and not _pipeline_task.done():
         _pipeline_task.cancel()
         _pipeline_task = None
-        logger.info("Pipeline stopped")
+    if _scheduled_task and not _scheduled_task.done():
+        _scheduled_task.cancel()
+        _scheduled_task = None
+    logger.info("Pipeline stopped")

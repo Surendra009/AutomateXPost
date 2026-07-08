@@ -37,7 +37,9 @@ class Draft(SQLModel, table=True):
     category: str = "other"
     tickers: str = ""  # comma-separated
     confidence: float = 0.5
-    status: str = "pending"  # pending, approved, rejected, posted, stale
+    status: str = "pending"  # pending, scheduled, approved, rejected, posted, stale
+    scheduled_at: datetime | None = None
+    post_error: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -47,7 +49,14 @@ class Post(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     draft_id: int = Field(foreign_key="drafts.id")
     tweet_id: str = ""
+    thread_tweet_ids: str = ""  # comma-separated root + replies
+    media_url: str = ""
     posted_at: datetime = Field(default_factory=datetime.utcnow)
+    like_count: int = 0
+    retweet_count: int = 0
+    reply_count: int = 0
+    impression_count: int = 0
+    metrics_updated_at: datetime | None = None
 
 
 class RejectionFeedback(SQLModel, table=True):
@@ -58,6 +67,27 @@ class RejectionFeedback(SQLModel, table=True):
     reject_count: int = 1
     pattern: str | None = None  # optional regex learned from repeated rejects
     last_rejected_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RejectionNote(SQLModel, table=True):
+    __tablename__ = "rejection_notes"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    draft_id: int = Field(index=True)
+    reason: str = "other"
+    note: str = ""
+    draft_text_sample: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class PushSubscription(SQLModel, table=True):
+    __tablename__ = "push_subscriptions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    endpoint: str = Field(unique=True, index=True)
+    p256dh: str
+    auth: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class AppSetting(SQLModel, table=True):

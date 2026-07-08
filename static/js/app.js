@@ -14,6 +14,9 @@ function updateDedupModeDesc(mode) {
   if (el) el.textContent = DEDUP_MODE_DESC[mode] || DEDUP_MODE_DESC.pipeline;
 }
 let editingDraftId = null;
+let rejectDraftId = null;
+let scheduleDraftId = null;
+let rejectionReasons = [];
 
 // ── API helpers ──────────────────────────────────────────
 
@@ -115,6 +118,7 @@ async function loadQueue(silent = false) {
     const data = await api('/queue');
     renderQueue(data.drafts);
     updateBadge(data.count);
+    rejectionReasons = data.rejection_reasons || rejectionReasons;
     if (data.hidden_duplicates > 0 && currentTab === 'queue') {
       const sub = document.getElementById('header-subtitle');
       sub.textContent = `${data.count} draft${data.count === 1 ? '' : 's'} · ${data.hidden_duplicates} duplicate${data.hidden_duplicates === 1 ? '' : 's'} hidden`;
@@ -194,31 +198,44 @@ function renderDraftCard(d) {
         </div>
         <div class="post-actions">
           <button class="btn btn-approve btn-block" data-action="approve" data-id="${d.id}">Approve &amp; post</button>
+          <div class="post-actions-row three-col">
+            <button class="btn btn-secondary" data-action="schedule" data-id="${d.id}">Schedule</button>
+            <button class="btn btn-edit" data-action="regenerate" data-id="${d.id}">Retry</button>
+            <button class="btn btn-edit" data-action="edit" data-id="${d.id}">Edit</button>
+          </div>
           <div class="post-actions-row">
             <button class="btn btn-reject" data-action="reject" data-id="${d.id}">Reject</button>
-            <button class="btn btn-edit" data-action="edit" data-id="${d.id}">Edit</button>
           </div>
         </div>
       </div>`;
   }
 
   const draftMins = d.draft_age_minutes ?? 0;
-  const ageClass = draftMins >= 420 ? 'is-stale' : draftMins >= 360 ? 'is-aging' : '';
-  const ageLabel = d.age;
+  const draftAgeClass = draftMins >= 420 ? 'is-stale' : draftMins >= 360 ? 'is-aging' : '';
+  const storyMins = d.story_age_minutes ?? 0;
+  const storyAgeClass = !d.story_fresh ? 'is-stale-story' : storyMins >= 180 ? 'is-aging-story' : '';
+  const scheduledBadge = d.status === 'scheduled' && d.scheduled_at
+    ? `<span class="scheduled-badge">Scheduled ${formatDate(d.scheduled_at)}</span>` : '';
+  const postError = d.post_error
+    ? `<div class="post-error">${esc(d.post_error)}</div>` : '';
 
   return `
     <article class="post-card" data-id="${d.id}" data-impact="${esc(d.impact)}">
       <div class="post-head">
-        <span class="post-source">${source}${d.is_seed ? ' <span class="seed-badge">Sample</span>' : ''}</span>
+        <span class="post-source">${source}${d.is_seed ? ' <span class="seed-badge">Sample</span>' : ''}${scheduledBadge}</span>
         <div class="post-head-actions">
           <button type="button" class="btn-icon" data-action="copy" data-id="${d.id}" title="Copy text" aria-label="Copy draft text">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           </button>
-          <span class="post-age ${ageClass}" title="Draft created ${esc(d.age)} ago">
-            <span class="post-age-label">Draft</span> ${esc(ageLabel)}
-          </span>
+          <div class="post-age-wrap">
+            <span class="post-age ${draftAgeClass}" title="Draft created ${esc(d.age)} ago">
+              <span class="post-age-label">Draft</span> ${esc(d.age)}
+            </span>
+            ${d.story_age ? `<div class="story-age ${storyAgeClass}"><span class="post-age-label">Story</span> ${esc(d.story_age)}${!d.story_fresh ? ' · stale' : ''}</div>` : ''}
+          </div>
         </div>
       </div>
+      ${postError}
       ${body}
     </article>`;
 }
@@ -254,15 +271,21 @@ async function handleCardAction(e) {
       btn.disabled = false;
     }
   } else if (action === 'reject') {
+    rejectDraftId = id;
+    openRejectModal();
+  } else if (action === 'regenerate') {
     btn.disabled = true;
     try {
-      await api(`/drafts/${id}/reject`, { method: 'POST' });
-      showToast('Rejected', 'success');
+      await api(`/drafts/${id}/regenerate`, { method: 'POST' });
+      showToast('New draft generated', 'success');
       loadQueue();
     } catch (err) {
       showToast(err.message, 'error');
       btn.disabled = false;
     }
+  } else if (action === 'schedule') {
+    scheduleDraftId = id;
+    openScheduleModal();
   } else if (action === 'edit') {
     editingDraftId = id;
     loadQueue();
@@ -353,6 +376,16 @@ function renderHistory(data) {
   document.getElementById('stats-value').textContent = `${posted} / ${cap}`;
   document.getElementById('stats-bar').style.width = `${pct}%`;
 
+  const analytics = data.analytics || {};
+  const banner = document.getElementById('analytics-banner');
+  if (analytics.totals && analytics.totals.count) {
+    banner.classList.remove('hidden');
+    document.getElementById('analytics-totals').textContent =
+      `${analytics.totals.likes || 0} likes · ${analytics.totals.retweets || 0} RTs`;
+  } else {
+    banner.classList.add('hidden');
+  }
+
   const postedList = document.getElementById('posted-list');
   const postedEmpty = document.getElementById('posted-empty');
   if (data.posted.length) {
@@ -362,6 +395,7 @@ function renderHistory(data) {
         <p>${esc(p.text)}</p>
         <div class="list-item-foot">
           <span>${formatDate(p.posted_at)}</span>
+          ${(p.likes || p.retweets) ? `<span class="engagement-pill">♥ ${p.likes || 0} · ↻ ${p.retweets || 0}</span>` : ''}
           ${p.tweet_url
             ? `<a href="${esc(p.tweet_url)}" target="_blank" rel="noopener">View on X</a>`
             : '<span class="muted">Dry run</span>'}
@@ -426,6 +460,8 @@ async function loadSettings() {
     const dedupMode = data.dedup_mode || 'pipeline';
     document.getElementById('dedup-mode').value = dedupMode;
     updateDedupModeDesc(dedupMode);
+    document.getElementById('allow-hashtags').checked = !!data.allow_hashtags;
+    document.getElementById('push-enabled').checked = data.push_enabled !== false;
     watchlist = data.watchlist || [];
     renderWatchlist();
 
@@ -473,6 +509,8 @@ async function loadSettings() {
       schedLabel = `Quiet (${sched.quiet_window || '10pm–5am'})`;
     } else if (sched.is_weekend) {
       schedLabel = `Weekend (every ${sched.weekend_interval_hours || 3}h)`;
+    } else if (sched.market_hours) {
+      schedLabel = `Market hours (${sched.pipeline_interval_seconds || 120}s)`;
     } else if (sched.next_mode === 'catchup') {
       schedLabel = 'Catch-up at 5am';
     } else {
@@ -598,6 +636,8 @@ document.getElementById('save-settings').addEventListener('click', async () => {
         daily_post_cap: parseInt(document.getElementById('daily-cap').value),
         cooldown_minutes: parseInt(document.getElementById('cooldown').value),
         dedup_mode: document.getElementById('dedup-mode').value,
+        allow_hashtags: document.getElementById('allow-hashtags').checked,
+        push_enabled: document.getElementById('push-enabled').checked,
         watchlist,
       }),
     });
@@ -631,6 +671,131 @@ document.querySelectorAll('.pause-btn').forEach((btn) => {
     }
   });
 });
+
+// ── Reject / Schedule modals ─────────────────────────────
+
+const REJECT_LABELS = {
+  too_vague: 'Too vague',
+  wrong_ticker: 'Wrong ticker',
+  bad_hook: 'Weak hook',
+  too_long: 'Too long',
+  off_topic: 'Off topic',
+  listicle: 'Listicle / fluff',
+  other: 'Other',
+};
+
+function openRejectModal() {
+  const grid = document.getElementById('reject-reasons');
+  const reasons = rejectionReasons.length ? rejectionReasons : Object.keys(REJECT_LABELS);
+  grid.innerHTML = reasons.map((r) => `
+    <button type="button" class="reason-btn" data-reason="${esc(r)}">${esc(REJECT_LABELS[r] || r)}</button>
+  `).join('');
+  grid.querySelectorAll('.reason-btn').forEach((btn) => {
+    btn.addEventListener('click', () => submitReject(btn.dataset.reason));
+  });
+  document.getElementById('reject-modal').classList.remove('hidden');
+}
+
+async function submitReject(reason) {
+  document.getElementById('reject-modal').classList.add('hidden');
+  if (!rejectDraftId) return;
+  try {
+    await api(`/drafts/${rejectDraftId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+    showToast('Rejected — will improve future drafts', 'success');
+    loadQueue();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+  rejectDraftId = null;
+}
+
+document.getElementById('reject-cancel').addEventListener('click', () => {
+  document.getElementById('reject-modal').classList.add('hidden');
+  rejectDraftId = null;
+});
+
+function openScheduleModal() {
+  const input = document.getElementById('schedule-input');
+  const d = new Date(Date.now() + 30 * 60000);
+  input.value = toLocalDatetimeValue(d);
+  document.getElementById('schedule-modal').classList.remove('hidden');
+}
+
+function toLocalDatetimeValue(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+document.querySelectorAll('.schedule-quick-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const mins = parseInt(btn.dataset.minutes, 10);
+    const d = new Date(Date.now() + mins * 60000);
+    document.getElementById('schedule-input').value = toLocalDatetimeValue(d);
+  });
+});
+
+document.getElementById('schedule-cancel').addEventListener('click', () => {
+  document.getElementById('schedule-modal').classList.add('hidden');
+  scheduleDraftId = null;
+});
+
+document.getElementById('schedule-confirm').addEventListener('click', async () => {
+  const val = document.getElementById('schedule-input').value;
+  if (!val || !scheduleDraftId) return;
+  const scheduled_at = new Date(val).toISOString();
+  try {
+    await api(`/drafts/${scheduleDraftId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ scheduled_at }),
+    });
+    showToast('Scheduled', 'success');
+    document.getElementById('schedule-modal').classList.add('hidden');
+    scheduleDraftId = null;
+    loadQueue();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+// ── Push notifications ───────────────────────────────────
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+async function subscribePush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    showToast('Push not supported on this browser', 'error');
+    return;
+  }
+  try {
+    const { public_key } = await api('/push/vapid-public-key');
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(public_key),
+    });
+    const json = sub.toJSON();
+    await api('/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        endpoint: json.endpoint,
+        keys: json.keys,
+      }),
+    });
+    showToast('Push enabled', 'success');
+  } catch (err) {
+    showToast(err.message || 'Push setup failed', 'error');
+  }
+}
+
+document.getElementById('enable-push').addEventListener('click', subscribePush);
 
 // ── Utilities ────────────────────────────────────────────
 

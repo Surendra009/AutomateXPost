@@ -62,6 +62,39 @@ CLASSIFICATION_CACHE_HOURS = 12  # reuse Haiku classifications within this windo
 REJECTION_LEARN_THRESHOLD = 2  # rejects before a title shape is treated as noise
 REJECTION_FUZZY_THRESHOLD = 88  # fuzzy match against learned rejected titles
 
+WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() in ("1", "true", "yes")
+MAX_WEB_RESULTS_PER_QUERY = int(os.getenv("MAX_WEB_RESULTS_PER_QUERY", "6"))
+MAX_WEB_TICKERS_PER_CYCLE = int(os.getenv("MAX_WEB_TICKERS_PER_CYCLE", "8"))
+FINNHUB_GENERAL_SUPPLEMENT = os.getenv("FINNHUB_GENERAL_SUPPLEMENT", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+# Posting & engagement
+X_POST_MAX_RETRIES = int(os.getenv("X_POST_MAX_RETRIES", "3"))
+SCHEDULED_POST_CHECK_SECONDS = int(os.getenv("SCHEDULED_POST_CHECK_SECONDS", "60"))
+MARKET_HOURS_INTERVAL_SECONDS = int(os.getenv("MARKET_HOURS_INTERVAL_SECONDS", "120"))
+PREMARKET_START_HOUR = int(os.getenv("PREMARKET_START_HOUR", "7"))
+MARKET_CLOSE_HOUR = int(os.getenv("MARKET_CLOSE_HOUR", "16"))
+ENABLE_THREADS = os.getenv("ENABLE_THREADS", "true").lower() in ("1", "true", "yes")
+ENABLE_POST_MEDIA = os.getenv("ENABLE_POST_MEDIA", "true").lower() in ("1", "true", "yes")
+ANALYTICS_REFRESH_HOURS = int(os.getenv("ANALYTICS_REFRESH_HOURS", "6"))
+ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_CLAIMS_EMAIL = os.getenv("VAPID_CLAIMS_EMAIL", "mailto:admin@postpilot.local")
+
+REJECTION_REASONS = (
+    "too_vague",
+    "wrong_ticker",
+    "bad_hook",
+    "too_long",
+    "off_topic",
+    "listicle",
+    "other",
+)
+
 # Market news RSS feeds (Reuters feed is deprecated/broken — use alternatives below)
 RSS_FEEDS = [
     ("CNBC Markets", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"),
@@ -98,6 +131,8 @@ DEFAULT_SETTINGS = {
     "watchlist": [],
     "paused_until": None,
     "dedup_mode": "pipeline",
+    "allow_hashtags": False,
+    "push_enabled": True,
 }
 
 
@@ -108,4 +143,7 @@ def get_settings():
         "x_configured": all([X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]),
         "finnhub_configured": bool(get_finnhub_key()),
         "dry_run": DRY_RUN,
+        "web_search_enabled": WEB_SEARCH_ENABLED,
+        "push_configured": bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY),
+        "alert_webhook_configured": bool(ALERT_WEBHOOK_URL),
     }
