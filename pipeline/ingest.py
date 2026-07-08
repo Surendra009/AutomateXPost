@@ -22,6 +22,7 @@ from logging_config import setup_logging
 from models import Headline
 from pipeline.finnhub_api import finnhub_get, parse_finnhub_timestamp
 from pipeline.freshness import is_fresh, news_cutoff
+from pipeline.dedup_mode import dedup_at_ingest
 from pipeline.ingest_dedup import load_ingest_dedup_index
 from pipeline.story_key import title_fingerprint
 
@@ -190,7 +191,12 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
                     skipped += 1
                     continue
                 chash = _content_hash(item["title"], item["url"])
-                dup_reason = dedup_index.is_duplicate(item["title"], chash)
+                if dedup_at_ingest():
+                    dup_reason = dedup_index.is_duplicate(item["title"], chash)
+                elif chash in dedup_index.url_hashes:
+                    dup_reason = "duplicate url"
+                else:
+                    dup_reason = None
                 if dup_reason:
                     dupes += 1
                     continue

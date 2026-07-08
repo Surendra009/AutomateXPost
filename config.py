@@ -100,6 +100,7 @@ DEFAULT_SETTINGS = {
     "cooldown_minutes": 5,
     "watchlist": [],
     "paused_until": None,
+    "dedup_mode": "pipeline",
 }
 
 
