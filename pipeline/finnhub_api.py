@@ -132,3 +132,37 @@ def test_finnhub_connection() -> dict:
         result["error"] = None
 
     return result
+
+
+def fetch_quote(symbol: str) -> dict[str, float] | None:
+    """Real-time quote: current price, change, percent change."""
+    data, err = finnhub_get("quote", {"symbol": symbol.upper()})
+    if err or not isinstance(data, dict):
+        return None
+    try:
+        current = float(data.get("c") or 0)
+        if current <= 0:
+            return None
+        return {
+            "price": current,
+            "change": float(data.get("d") or 0),
+            "pct": float(data.get("dp") or 0),
+            "high": float(data.get("h") or 0),
+            "low": float(data.get("l") or 0),
+            "prev_close": float(data.get("pc") or 0),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_52_week_high(symbol: str) -> float | None:
+    """52-week high from basic financials metrics."""
+    data, err = finnhub_get("stock/metric", {"symbol": symbol.upper(), "metric": "all"})
+    if err or not isinstance(data, dict):
+        return None
+    metric = data.get("metric") or {}
+    try:
+        high = float(metric.get("52WeekHigh") or 0)
+        return high if high > 0 else None
+    except (TypeError, ValueError):
+        return None

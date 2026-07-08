@@ -1,6 +1,7 @@
 """LLM filter step — classify headline relevance."""
 
 import json
+import re
 from typing import Any
 
 from sqlmodel import select
@@ -196,9 +197,15 @@ def _passes_hard_filter(
     if category == "other" and (impact != "high" or score < 0.8):
         return False
 
-    # Need at least one ticker OR macro/geopolitics with high impact
+    # Need at least one ticker OR macro/geopolitics with high impact OR explicit price move
     macro_cats = {"macro", "geopolitics", "regulatory"}
-    if not tickers and category not in macro_cats:
+    price_move = re.search(
+        r"\b(all.time high|record high|52.week|surge|soar|plunge|tumble|rally|selloff|"
+        r"gainer|loser)\b|\b\d+\.?\d*%\b",
+        f"{headline.title} {headline.summary}" if headline else "",
+        re.I,
+    )
+    if not tickers and category not in macro_cats and not price_move:
         return False
 
     return True
