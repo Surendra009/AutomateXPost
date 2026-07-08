@@ -9,9 +9,10 @@ from typing import Any
 from sqlmodel import col, or_, select
 
 from config import MAX_WEB_RESULTS_PER_QUERY
-from database import get_session
+from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline, Post
+from pipeline.draft_lane import draft_lane
 from pipeline.freshness import format_age
 from pipeline.llm import call_chat_llm
 from pipeline.noise import is_title_noise
@@ -19,6 +20,8 @@ from pipeline.url_resolve import resolve_article_url
 from pipeline.web_search import search_google_news
 
 logger = setup_logging()
+
+_EARNINGS_QUERY = re.compile(r"\bearnings?\b", re.I)
 
 _CHAT_PREFIXES = (
     r"^(?:find|search|show me|look for|get|list|any|what(?:'s| is)?)\s+",
@@ -176,6 +179,7 @@ def _draft_hit(draft: Draft, headline: Headline) -> dict[str, Any]:
         "format": draft.format,
         "impact": draft.impact,
         "category": draft.category,
+        "lane": draft_lane(draft.category, draft.tickers),
         "tickers": draft.tickers.split(",") if draft.tickers else [],
         "confidence": draft.confidence,
         "created_at": draft.created_at.isoformat(),
@@ -202,6 +206,23 @@ def _headline_hit(headline: Headline) -> dict[str, Any]:
     }
 
 
+def _earnings_query_symbols(terms: list[str]) -> list[str]:
+    return [t.upper().lstrip("$") for t in terms if re.fullmatch(r"\$?[A-Za-z]{1,5}", t)]
+
+
+def _fetch_earnings_for_chat(message: str, terms: list[str]) -> list[dict[str, Any]]:
+    if not _EARNINGS_QUERY.search(message) and not _earnings_query_symbols(terms):
+        return []
+    from pipeline.earnings_calendar import get_earnings_snapshot
+
+    symbols = _earnings_query_symbols(terms)
+    return get_earnings_snapshot(
+        watchlist=get_setting("watchlist", []),
+        query_symbols=symbols or None,
+        limit=10,
+    )
+
+
 def _fallback_reply(
     query: str,
     *,
@@ -209,8 +230,10 @@ def _fallback_reply(
     headlines: list[dict],
     posted: list[dict],
     news: list[dict],
+    earnings: list[dict] | None = None,
 ) -> str:
-    total = len(drafts) + len(headlines) + len(posted) + len(news)
+    earnings = earnings or []
+    total = len(drafts) + len(headlines) + len(posted) + len(news) + len(earnings)
     if total == 0:
         return (
             f'Nothing in your library for "{query}". '
@@ -229,6 +252,8 @@ def _fallback_reply(
         parts.append(f"{len(other_drafts)} other draft{'s' if len(other_drafts) != 1 else ''} (rejected/stale).")
     if headlines:
         parts.append(f"{len(headlines)} headline{'s' if len(headlines) != 1 else ''} in the feed.")
+    if earnings:
+        parts.append(f"{len(earnings)} earnings calendar row{'s' if len(earnings) != 1 else ''}.")
     if news:
         parts.append(f"{len(news)} live news result{'s' if len(news) != 1 else ''}.")
 
@@ -243,6 +268,7 @@ def _llm_reply(
     headlines: list[dict],
     posted: list[dict],
     news: list[dict],
+    earnings: list[dict] | None = None,
 ) -> str | None:
     context = {
         "user_message": message,
@@ -251,11 +277,13 @@ def _llm_reply(
         "posted": posted[:4],
         "headlines": headlines[:4],
         "news": news[:6],
+        "earnings_calendar": (earnings or [])[:8],
     }
     system = (
         "You are PostPilot's search assistant for stock, tech, and general news topics. "
         "Summarize search results in 2-4 short sentences. Be direct and helpful. "
         "Mention counts and highlight the most relevant match. "
+        "If earnings_calendar rows are present, mention upcoming or reported names. "
         "If only live news returned, say that and note the top headline. Plain text only."
     )
     user = f"Results JSON:\n{json.dumps(context, default=str)[:6000]}"
@@ -274,11 +302,13 @@ def chat_search(message: str, *, fetch_news: bool = True) -> dict[str, Any]:
             "headlines": [],
             "posted": [],
             "news": [],
+            "earnings": [],
         }
 
     phrase, terms = _extract_query(message)
     query = phrase or message.strip()
 
+    earnings = _fetch_earnings_for_chat(message, terms)
     drafts = search_drafts(phrase, terms)
     posted = search_posted(phrase, terms)
     posted_ids = {p["id"] for p in posted}
@@ -289,14 +319,25 @@ def chat_search(message: str, *, fetch_news: bool = True) -> dict[str, Any]:
     }
     headlines = [h for h in headlines if h["id"] not in draft_headline_ids]
 
-    local_count = len(drafts) + len(headlines) + len(posted)
+    local_count = len(drafts) + len(headlines) + len(posted) + len(earnings)
     news: list[dict[str, Any]] = []
     if fetch_news or local_count == 0:
         news = fetch_topic_news(query)
+        if _EARNINGS_QUERY.search(message) and len(news) < 4:
+            extra = fetch_topic_news(f"stocks earnings reports {query}", limit=6)
+            seen = {n["url"] for n in news}
+            for item in extra:
+                if item["url"] not in seen:
+                    news.append(item)
+                    seen.add(item["url"])
 
-    reply = _llm_reply(message, query, drafts=drafts, headlines=headlines, posted=posted, news=news)
+    reply = _llm_reply(
+        message, query, drafts=drafts, headlines=headlines, posted=posted, news=news, earnings=earnings,
+    )
     if not reply:
-        reply = _fallback_reply(query, drafts=drafts, headlines=headlines, posted=posted, news=news)
+        reply = _fallback_reply(
+            query, drafts=drafts, headlines=headlines, posted=posted, news=news, earnings=earnings,
+        )
 
     return {
         "reply": reply,
@@ -305,4 +346,5 @@ def chat_search(message: str, *, fetch_news: bool = True) -> dict[str, Any]:
         "headlines": headlines,
         "posted": posted,
         "news": news,
+        "earnings": earnings,
     }

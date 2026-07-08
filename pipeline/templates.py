@@ -13,6 +13,8 @@ from pipeline.ai_news import (
     is_ai_source,
     is_material_ai_update,
 )
+from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts
+from pipeline.enrich import fetch_article_text
 
 # ── Earnings patterns ─────────────────────────────────────────────────────
 
@@ -23,14 +25,6 @@ EARNINGS_CONTEXT = re.compile(
 BEAT_MISS = re.compile(
     r"\b(beat|beats|beating|topped|tops|exceeded|exceeds|surpassed|"
     r"missed|misses|missing|fell short|below expectations|in.?line with)\b",
-    re.I,
-)
-EPS_VS = re.compile(
-    r"eps\s+(?:of\s+)?\$?([\d.]+).*?(?:vs\.?|versus|est\.?|expected)\s*\$?([\d.]+)",
-    re.I,
-)
-REV_VS = re.compile(
-    r"revenue\s+(?:of\s+)?\$?([\d.]+)\s*([bBmM])?.*?(?:vs\.?|versus|est\.?|expected)\s*\$?([\d.]+)\s*([bBmM])?",
     re.I,
 )
 INLINE_TICKER = re.compile(r"\$([A-Z]{1,5})\b")
@@ -172,27 +166,17 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
 
     verb = _beat_miss_verb(bm)
     ticker = tickers[0]
-    line2_parts: list[str] = []
+    facts = extract_earnings_facts(text)
+    lines = build_earnings_lines(ticker, verb, facts)
+    if not lines and headline.url:
+        article = fetch_article_text(headline.url)
+        if article:
+            facts = extract_earnings_facts(f"{text} {article[:2500]}")
+            lines = build_earnings_lines(ticker, verb, facts)
+    if not lines:
+        return None
 
-    eps_m = EPS_VS.search(text)
-    if eps_m:
-        line1 = f"{ticker} {verb} EPS ${eps_m.group(1)} vs ${eps_m.group(2)} est"
-    else:
-        line1 = f"{ticker} {verb} quarterly earnings expectations"
-
-    rev_m = REV_VS.search(text)
-    if rev_m:
-        actual = _fmt_rev(rev_m.group(1), rev_m.group(2))
-        est = _fmt_rev(rev_m.group(3), rev_m.group(4))
-        line2_parts.append(f"Revenue {actual} vs {est} est")
-    elif verb == "beat":
-        line2_parts.append("Top-line or guidance surprised to the upside")
-    elif verb == "missed":
-        line2_parts.append("Stock likely repricing on the disappointment")
-    else:
-        line2_parts.append("Results largely in line with the street")
-
-    line2 = line2_parts[0] if line2_parts else ""
+    line1, line2 = lines
     ticker_line = " ".join(f"${t}" for t in tickers)
     body = f"{line1}\n{line2}\n\n{ticker_line}".strip()
     impact = "high" if verb in ("beat", "missed") else "med"

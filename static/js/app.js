@@ -1,7 +1,7 @@
 /* PostPilot PWA — vanilla JS, no build step */
 
 const API = '/api';
-let currentTab = 'queue';
+let currentTab = 'stock';
 let refreshTimer = null;
 const DEDUP_MODE_DESC = {
   pipeline: 'Block duplicate stories before drafting (saves API cost).',
@@ -18,7 +18,7 @@ let rejectDraftId = null;
 let scheduleDraftId = null;
 let rejectionReasons = [];
 let watchlist = [];
-let searchTopics = [];
+let queueData = { drafts: [], counts: { stock: 0, politics: 0 }, hidden_duplicates: 0 };
 
 // ── API helpers ──────────────────────────────────────────
 
@@ -84,9 +84,16 @@ document.querySelectorAll('.tab').forEach((btn) => {
     btn.classList.add('active');
     document.querySelectorAll('.page-section').forEach((s) => s.classList.add('hidden'));
     document.getElementById(`${currentTab}-screen`).classList.remove('hidden');
-    const titles = { queue: 'Queue', history: 'History', chat: 'Chat', settings: 'Settings' };
+    const titles = {
+      stock: 'Stock',
+      politics: 'Politics',
+      history: 'History',
+      chat: 'Chat',
+      settings: 'Settings',
+    };
     const subtitles = {
-      queue: 'Review pending drafts',
+      stock: 'Earnings, tickers & markets',
+      politics: 'Geopolitics & policy',
       history: 'Posted & rejected',
       chat: 'Search drafts & topics',
       settings: 'Pipeline & limits',
@@ -98,16 +105,20 @@ document.querySelectorAll('.tab').forEach((btn) => {
 });
 
 function loadCurrentTab() {
-  if (currentTab === 'queue') loadQueue();
+  if (currentTab === 'stock' || currentTab === 'politics') loadQueue();
   else if (currentTab === 'history') loadHistory();
   else if (currentTab === 'chat') initChatScreen();
   else if (currentTab === 'settings') loadSettings();
 }
 
+function isQueueTab() {
+  return currentTab === 'stock' || currentTab === 'politics';
+}
+
 function startRefresh() {
   stopRefresh();
   refreshTimer = setInterval(() => {
-    if (currentTab === 'queue') loadQueue(true);
+    if (isQueueTab()) loadQueue(true);
   }, 30000);
 }
 
@@ -188,6 +199,7 @@ function renderChatResults(data) {
   addSection(data.drafts || [], (d) => {
     const el = document.createElement('div');
     el.className = 'chat-result';
+    el.dataset.lane = d.lane || (d.category === 'geopolitics' ? 'politics' : 'stock');
     const status = d.status === 'pending' ? 'In queue' : d.status;
     el.innerHTML = `
       <div class="chat-result-head">
@@ -203,8 +215,9 @@ function renderChatResults(data) {
           ? `<a class="btn btn-secondary" href="${esc(d.headline.url)}" target="_blank" rel="noopener">Source</a>`
           : ''}
       </div>`;
-    el.querySelector('[data-open-queue]')?.addEventListener('click', () => {
-      document.querySelector('.tab[data-tab="queue"]')?.click();
+    el.querySelector('[data-open-queue]')?.addEventListener('click', (e) => {
+      const lane = e.target.closest('.chat-result')?.dataset?.lane || 'stock';
+      document.querySelector(`.tab[data-tab="${lane}"]`)?.click();
     });
     return el;
   });
@@ -227,6 +240,15 @@ function renderChatResults(data) {
         <span>${esc(h.age)}</span>
       </div>
       <p><a href="${esc(h.url)}" target="_blank" rel="noopener">${esc(h.title)}</a></p>`;
+    return el;
+  });
+
+  addSection(data.earnings || [], (e) => {
+    const el = document.createElement('div');
+    el.className = 'chat-result';
+    el.innerHTML = `
+      <div class="chat-result-head"><span>Earnings · ${esc(e.source || 'Finnhub')}</span><span>${esc(e.date || '')}</span></div>
+      <p>${esc(e.label || e.symbol)}</p>`;
     return el;
   });
 
@@ -298,43 +320,67 @@ async function sendChatMessage() {
   }
 }
 
-// ── Queue ────────────────────────────────────────────────
+// ── Queue (stock & politics lanes) ───────────────────────
 
 async function loadQueue(silent = false) {
   try {
     const data = await api('/queue');
-    renderQueue(data.drafts);
-    updateBadge(data.count);
+    queueData = {
+      drafts: data.drafts || [],
+      counts: data.counts || { stock: 0, politics: 0 },
+      hidden_duplicates: data.hidden_duplicates || 0,
+    };
     rejectionReasons = data.rejection_reasons || rejectionReasons;
-    if (data.hidden_duplicates > 0 && currentTab === 'queue') {
-      const sub = document.getElementById('header-subtitle');
-      sub.textContent = `${data.count} draft${data.count === 1 ? '' : 's'} · ${data.hidden_duplicates} duplicate${data.hidden_duplicates === 1 ? '' : 's'} hidden`;
-    }
+    if (isQueueTab()) renderLane(currentTab);
+    updateBadges();
   } catch (err) {
     if (!silent) showToast(err.message, 'error');
   }
 }
 
-function updateBadge(count) {
-  const badge = document.getElementById('queue-badge');
-  const navBadge = document.getElementById('nav-badge');
+function renderLane(lane) {
+  const drafts = queueData.drafts.filter((d) => d.lane === lane);
+  renderQueue(drafts, lane);
   const sub = document.getElementById('header-subtitle');
-  if (count > 0) {
-    badge.textContent = count;
-    badge.classList.remove('hidden');
-    navBadge.textContent = count;
-    navBadge.classList.remove('hidden');
-    if (currentTab === 'queue') sub.textContent = `${count} draft${count === 1 ? '' : 's'} waiting`;
+  const count = drafts.length;
+  if (queueData.hidden_duplicates > 0) {
+    sub.textContent = `${count} draft${count === 1 ? '' : 's'} · ${queueData.hidden_duplicates} duplicate${queueData.hidden_duplicates === 1 ? '' : 's'} hidden`;
   } else {
-    badge.classList.add('hidden');
-    navBadge.classList.add('hidden');
-    if (currentTab === 'queue') sub.textContent = 'Review pending drafts';
+    sub.textContent = count
+      ? `${count} draft${count === 1 ? '' : 's'} waiting`
+      : (lane === 'politics' ? 'Geopolitics & policy' : 'Earnings, tickers & markets');
   }
 }
 
-function renderQueue(drafts) {
-  const list = document.getElementById('queue-list');
-  const empty = document.getElementById('queue-empty');
+function updateBadges() {
+  const counts = queueData.counts || { stock: 0, politics: 0 };
+  const headerBadge = document.getElementById('queue-badge');
+  const stockBadge = document.getElementById('stock-badge');
+  const politicsBadge = document.getElementById('politics-badge');
+
+  [['stock', stockBadge], ['politics', politicsBadge]].forEach(([lane, el]) => {
+    const n = counts[lane] || 0;
+    if (!el) return;
+    if (n > 0) {
+      el.textContent = n;
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  });
+
+  const activeCount = counts[currentTab] || 0;
+  if (isQueueTab() && activeCount > 0) {
+    headerBadge.textContent = activeCount;
+    headerBadge.classList.remove('hidden');
+  } else {
+    headerBadge.classList.add('hidden');
+  }
+}
+
+function renderQueue(drafts, lane) {
+  const list = document.getElementById(`${lane}-list`);
+  const empty = document.getElementById(`${lane}-empty`);
   const sorted = [...drafts].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
   );
@@ -528,24 +574,30 @@ async function handleCardAction(e) {
 // ── Pull to refresh ──────────────────────────────────────
 
 let touchStartY = 0;
-const queueScreen = document.getElementById('queue-screen');
-queueScreen.addEventListener('touchstart', (e) => {
-  touchStartY = e.touches[0].clientY;
-}, { passive: true });
-queueScreen.addEventListener('touchmove', (e) => {
-  const diff = e.touches[0].clientY - touchStartY;
-  if (diff > 60 && window.scrollY === 0) {
-    document.getElementById('pull-indicator').classList.remove('hidden');
-  }
-}, { passive: true });
-queueScreen.addEventListener('touchend', async () => {
-  const indicator = document.getElementById('pull-indicator');
-  if (!indicator.classList.contains('hidden')) {
+
+function bindPullRefresh(screenId, indicatorId) {
+  const screen = document.getElementById(screenId);
+  if (!screen) return;
+  screen.addEventListener('touchstart', (e) => {
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+  screen.addEventListener('touchmove', (e) => {
+    const diff = e.touches[0].clientY - touchStartY;
+    if (diff > 60 && window.scrollY === 0) {
+      document.getElementById(indicatorId)?.classList.remove('hidden');
+    }
+  }, { passive: true });
+  screen.addEventListener('touchend', async () => {
+    const indicator = document.getElementById(indicatorId);
+    if (!indicator || indicator.classList.contains('hidden')) return;
     indicator.classList.add('hidden');
     await loadQueue();
     showToast('Refreshed', 'success');
-  }
-});
+  });
+}
+
+bindPullRefresh('stock-screen', 'stock-pull-indicator');
+bindPullRefresh('politics-screen', 'politics-pull-indicator');
 
 // ── History ──────────────────────────────────────────────
 
@@ -729,6 +781,23 @@ async function loadSettings() {
         <span>Drafts created</span>
         <span>${pipe.last_drafts_created ?? 0}</span>
       </div>
+      ${(() => {
+        const earn = pipe.earnings || {};
+        let html = '';
+        if (earn.configured === false) {
+          html += '<div class="status-row"><span>Earnings</span><span class="status-no">Needs FINNHUB_KEY</span></div>';
+        } else if (earn.watchlist_count > 0) {
+          html += `<div class="status-row"><span>Earnings today</span><span>${earn.reporting_today ?? 0} watchlist</span></div>`;
+        }
+        if (earn.upcoming?.length) {
+          const labels = earn.upcoming.slice(0, 4).map((e) => e.label || e.symbol).join(' · ');
+          html += `<div class="pipeline-sources">Upcoming: ${esc(labels)}</div>`;
+        }
+        if (earn.hint) {
+          html += `<p class="source-hint">${esc(earn.hint)}</p>`;
+        }
+        return html;
+      })()}
       ${pipe.last_expired ? `<div class="status-row"><span>Expired stale</span><span>${pipe.last_expired}</span></div>` : ''}
       ${(pipe.feedback?.learned_patterns ?? 0) > 0 ? `<div class="status-row"><span>Learned noise</span><span>${pipe.feedback.learned_patterns} patterns</span></div>` : ''}
       ${err}`;
@@ -846,7 +915,7 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
       showToast(parts.length ? parts.join(', ') : 'Fetch complete', 'success');
     }
     loadSettings();
-    if (currentTab === 'queue') loadQueue();
+    if (isQueueTab()) loadQueue();
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
@@ -861,7 +930,7 @@ document.getElementById('clear-samples').addEventListener('click', async () => {
   try {
     const res = await api('/drafts/clear-samples', { method: 'POST' });
     showToast(res.cleared ? `Cleared ${res.cleared} sample draft(s)` : 'No sample drafts found', 'success');
-    if (currentTab === 'queue') loadQueue();
+    if (isQueueTab()) loadQueue();
   } catch (err) {
     showToast(err.message, 'error');
   } finally {

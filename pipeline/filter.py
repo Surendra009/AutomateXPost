@@ -162,6 +162,11 @@ def _passes_hard_filter(
     if impact == "low":
         return False
 
+    if category == "earnings" and impact in ("high", "med"):
+        tickers = [t.upper() for t in classification.get("tickers", [])]
+        if tickers or score >= MIN_RELEVANCE_SCORE:
+            return True
+
     tickers = [t.upper() for t in classification.get("tickers", [])]
     watchlist_upper = [w.upper() for w in watchlist]
     on_watchlist = bool(watchlist_upper and any(t in watchlist_upper for t in tickers))

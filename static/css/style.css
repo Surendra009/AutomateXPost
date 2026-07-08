@@ -506,6 +506,9 @@ body {
 .tag-fmt-summary { background: #f5f3ff; color: #6d28d9; }
 .tag-cat-earnings { background: #f0fdf4; color: #15803d; }
 .tag-cat-ai { background: #ecfeff; color: #0e7490; }
+.tag-cat-geopolitics { background: #fef3c7; color: #b45309; }
+.tag-cat-macro { background: #eff6ff; color: #1d4ed8; }
+.tag-cat-regulatory { background: #f5f3ff; color: #6d28d9; }
 .tag-high { background: #fef2f2; color: #b91c1c; }
 .tag-med { background: #fffbeb; color: #b45309; }
 .tag-low { background: #ecfdf5; color: #047857; }
@@ -1064,7 +1067,7 @@ body {
   left: 0;
   right: 0;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   height: calc(var(--tab-h) + var(--safe-b));
   padding-bottom: var(--safe-b);
   background: rgba(255, 255, 255, 0.96);
@@ -1085,7 +1088,7 @@ body {
   background: none;
   color: var(--dim);
   font: inherit;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 500;
   cursor: pointer;
   position: relative;
@@ -1098,8 +1101,8 @@ body {
 
 .tab-badge {
   position: absolute;
-  top: 6px;
-  right: calc(50% - 22px);
+  top: 4px;
+  right: calc(50% - 18px);
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
