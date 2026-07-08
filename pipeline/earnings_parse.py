@@ -151,52 +151,80 @@ def extract_earnings_facts(text: str) -> EarningsFacts:
     return facts
 
 
+def build_earnings_line3(ticker: str, verb: str, facts: EarningsFacts) -> str:
+    """Trade implication — avoid wire-style filler."""
+    if verb == "beat":
+        if facts.eps_actual and facts.eps_estimate:
+            surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
+            if surprise is not None and surprise >= 8:
+                return f"Big EPS beat — {ticker} likely gaps up unless guidance disappoints"
+        if facts.revenue_actual and facts.revenue_estimate:
+            return f"Top line held up — next question is margin and full-year guide"
+        return f"Beat leans bullish into the call; guidance sets the real move"
+    if verb == "missed":
+        return f"Miss opens the door to a gap down — watch for guide cuts on the call"
+    if facts.eps_actual and facts.eps_estimate:
+        return f"In-line print — traders will trade the guide and segment detail"
+    return f"Numbers are in — the call narrative moves the stock from here"
+
+
 def build_earnings_lines(
     ticker: str,
     verb: str,
     facts: EarningsFacts,
-) -> tuple[str, str] | None:
-    """Build hook + detail lines. None when there are no concrete figures."""
+) -> tuple[str, str, str] | None:
+    """Build hook + detail + trade implication. None when there are no concrete figures."""
     if not facts.has_numbers():
         return None
 
     q = f"{facts.quarter} " if facts.quarter else ""
 
     if facts.eps_actual and facts.eps_estimate:
-        line1 = f"{ticker} {verb} {q}EPS {facts.eps_actual} vs {facts.eps_estimate} est"
+        surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
+        if surprise is not None and abs(surprise) >= 1:
+            direction = "above" if surprise >= 0 else "below"
+            line1 = (
+                f"{ticker} {verb} {q}EPS {facts.eps_actual} — "
+                f"{abs(surprise):.0f}% {direction} consensus"
+            )
+        else:
+            line1 = f"{ticker} {verb} {q}EPS {facts.eps_actual} vs {facts.eps_estimate} est"
     elif facts.eps_actual:
-        line1 = f"{ticker} reported {q}EPS {facts.eps_actual}"
+        line1 = f"{ticker} posted {q}EPS {facts.eps_actual}"
     elif facts.revenue_actual and facts.revenue_estimate:
-        line1 = f"{ticker} {verb} {q}revenue — {facts.revenue_actual} vs {facts.revenue_estimate} est"
+        line1 = f"{ticker} {verb} {q}revenue {facts.revenue_actual} vs {facts.revenue_estimate} est"
     elif facts.revenue_actual:
-        line1 = f"{ticker} reported {q}revenue {facts.revenue_actual}"
+        line1 = f"{ticker} posted {q}revenue {facts.revenue_actual}"
     else:
         return None
 
     line2_parts: list[str] = []
-    if facts.revenue_actual and facts.revenue_estimate and facts.eps_actual:
-        line2_parts.append(f"Revenue {facts.revenue_actual} vs {facts.revenue_estimate} est")
+    if facts.revenue_actual and facts.revenue_estimate and facts.eps_actual and facts.eps_estimate:
+        line2_parts.append(
+            f"Sales {facts.revenue_actual} vs {facts.revenue_estimate} est on EPS "
+            f"{facts.eps_actual} vs {facts.eps_estimate}"
+        )
     elif facts.revenue_actual and facts.revenue_estimate:
-        line2_parts.append(f"Sales {facts.revenue_actual} vs {facts.revenue_estimate} est")
-    elif facts.revenue_actual and not facts.eps_estimate:
-        line2_parts.append(f"Revenue came in at {facts.revenue_actual}")
+        line2_parts.append(f"Revenue {facts.revenue_actual} vs {facts.revenue_estimate} est")
     elif facts.yoy_pct and facts.revenue_actual:
-        line2_parts.append(f"Revenue {facts.revenue_actual}, up {facts.yoy_pct}% year over year")
+        line2_parts.append(f"Revenue {facts.revenue_actual}, +{facts.yoy_pct}% y/y")
     elif facts.yoy_pct:
-        line2_parts.append(f"Up {facts.yoy_pct}% year over year")
+        line2_parts.append(f"Growth ran +{facts.yoy_pct}% y/y")
     elif facts.eps_actual and facts.eps_estimate:
         surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
         if surprise is not None:
-            word = "above" if surprise >= 0 else "below"
-            line2_parts.append(f"{abs(surprise):.0f}% {word} the EPS estimate")
+            word = "cleared" if surprise >= 0 else "missed"
+            line2_parts.append(f"EPS {word} the street by {abs(surprise):.0f}%")
     elif verb == "beat":
-        line2_parts.append("Beat on the headline number — watch guidance on the call")
+        line2_parts.append(f"Headline beat — segment mix and guide matter for {ticker}")
     elif verb == "missed":
-        line2_parts.append("Miss likely pressures the stock near term")
+        line2_parts.append(f"Headline miss — multiple compression risk until guide stabilizes")
     else:
-        line2_parts.append("Results roughly in line with the street")
+        line2_parts.append(f"Print landed near consensus — the call sets direction")
 
     line2 = line2_parts[0] if line2_parts else ""
     if not line2:
         return None
-    return line1, line2
+
+    line3 = build_earnings_line3(ticker, verb, facts)
+    return line1, line2, line3
