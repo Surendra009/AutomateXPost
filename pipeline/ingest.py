@@ -27,7 +27,9 @@ from pipeline.freshness import is_fresh, news_cutoff
 from pipeline.dedup_mode import dedup_at_ingest
 from pipeline.ingest_dedup import load_ingest_dedup_index
 from pipeline.story_key import title_fingerprint
+from pipeline.url_resolve import resolve_article_url
 from pipeline.web_news import fetch_web_news
+from pipeline.dedup import story_has_active_draft, title_recently_ingested
 
 logger = setup_logging()
 
@@ -41,7 +43,7 @@ def _content_hash(title: str, url: str) -> str:
     return hashlib.sha256(f"{title.strip().lower()}|{url}".encode()).hexdigest()[:32]
 
 
-def _parse_date(entry: Any) -> datetime:
+def _parse_date(entry: Any) -> datetime | None:
     for attr in ("published_parsed", "updated_parsed", "created_parsed"):
         parsed = getattr(entry, attr, None)
         if parsed:
@@ -49,7 +51,7 @@ def _parse_date(entry: Any) -> datetime:
                 return datetime.fromtimestamp(mktime(parsed))
             except (ValueError, OverflowError):
                 pass
-    return datetime.utcnow()
+    return None
 
 
 def _get_summary(entry: Any) -> str:
@@ -71,12 +73,15 @@ def _entries_from_feed(source: str, url: str, raw: str) -> list[dict]:
         title = getattr(entry, "title", "").strip()
         if not title or not link:
             continue
+        published_at = _parse_date(entry)
+        if not published_at:
+            continue
         items.append({
             "source": source,
             "url": link,
             "title": title,
             "summary": _get_summary(entry),
-            "published_at": _parse_date(entry),
+            "published_at": published_at,
         })
     return items
 
@@ -200,11 +205,13 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
                 if not is_fresh(item["published_at"]):
                     skipped += 1
                     continue
-                chash = _content_hash(item["title"], item["url"])
+                if story_has_active_draft(item["title"]) or title_recently_ingested(item["title"]):
+                    dupes += 1
+                    continue
+                url = resolve_article_url(item["url"])
+                chash = _content_hash(item["title"], url)
                 if dedup_at_ingest():
                     dup_reason = dedup_index.is_duplicate(item["title"], chash)
-                elif chash in dedup_index.url_hashes:
-                    dup_reason = "duplicate url"
                 else:
                     dup_reason = None
                 if dup_reason:
@@ -212,7 +219,7 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
                     continue
                 headline = Headline(
                     source=item["source"],
-                    url=item["url"],
+                    url=url,
                     title=item["title"],
                     summary=item["summary"],
                     published_at=item["published_at"],
@@ -242,11 +249,19 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
 def get_unfiltered_headlines(limit: int = 50) -> list[Headline]:
     cutoff = news_cutoff()
     with get_session() as session:
-        return list(
+        rows = list(
             session.exec(
                 select(Headline)
                 .where(Headline.status == "new", Headline.published_at >= cutoff)
                 .order_by(Headline.published_at.desc())
-                .limit(limit)
+                .limit(limit * 2)
             ).all()
         )
+    fresh: list[Headline] = []
+    for headline in rows:
+        if story_has_active_draft(headline.title):
+            continue
+        fresh.append(headline)
+        if len(fresh) >= limit:
+            break
+    return fresh

@@ -22,7 +22,7 @@ HTTP_HEADERS = {
 }
 
 
-def _parse_date(entry: Any) -> datetime:
+def _parse_date(entry: Any) -> datetime | None:
     for attr in ("published_parsed", "updated_parsed", "created_parsed"):
         parsed = getattr(entry, attr, None)
         if parsed:
@@ -30,7 +30,7 @@ def _parse_date(entry: Any) -> datetime:
                 return datetime.fromtimestamp(mktime(parsed))
             except (ValueError, OverflowError):
                 pass
-    return datetime.utcnow()
+    return None
 
 
 def _get_summary(entry: Any) -> str:
@@ -69,13 +69,16 @@ def search_google_news(
         title = getattr(entry, "title", "").strip()
         if not title or not link:
             continue
+        published_at = _parse_date(entry)
+        if not published_at:
+            continue
         items.append(
             {
                 "source": source_label,
                 "url": link,
                 "title": title,
                 "summary": _get_summary(entry),
-                "published_at": _parse_date(entry),
+                "published_at": published_at,
                 "search_query": query,
             }
         )

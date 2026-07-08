@@ -9,7 +9,7 @@ from sqlmodel import select
 
 from database import get_session
 from models import Draft, Headline
-from pipeline.dedup import was_recently_drafted
+from pipeline.dedup import story_has_active_draft, title_recently_ingested, was_recently_drafted
 from pipeline.draft_budget import DraftBudget
 from pipeline.story_key import title_fingerprint
 
@@ -22,6 +22,12 @@ def content_hash(*parts: str) -> str:
 def headline_exists(chash: str) -> bool:
     with get_session() as session:
         return session.exec(select(Headline).where(Headline.hash == chash)).first() is not None
+
+
+def headline_exists_by_title(title: str) -> bool:
+    fp = title_fingerprint(title)
+    with get_session() as session:
+        return session.exec(select(Headline).where(Headline.title_fp == fp)).first() is not None
 
 
 def save_structured_draft(
@@ -45,7 +51,9 @@ def save_structured_draft(
         return False
     if was_recently_drafted(title, source):
         return False
-    if headline_exists(chash):
+    if story_has_active_draft(title) or title_recently_ingested(title):
+        return False
+    if headline_exists(chash) or headline_exists_by_title(title):
         return False
 
     now = published_at or datetime.utcnow()

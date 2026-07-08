@@ -54,6 +54,7 @@ def get_pipeline_status() -> dict:
         "last_run_at": get_setting("pipeline_last_run_at"),
         "last_ingest_count": get_setting("pipeline_last_ingest_count", 0),
         "last_drafts_created": get_setting("pipeline_last_drafts_created", 0),
+        "last_filter_kept": get_setting("pipeline_last_filter_kept", 0),
         "last_expired": get_setting("pipeline_last_expired", 0),
         "last_error": get_setting("pipeline_last_error"),
         "last_ingest_by_source": get_setting("pipeline_last_ingest_by_source", {}),
@@ -112,6 +113,7 @@ def _save_cycle_stats(
     *,
     ingest_count: int = 0,
     drafts_created: int = 0,
+    filter_kept: int = 0,
     expired: int = 0,
     error: str | None = None,
     ingest_by_source: dict | None = None,
@@ -119,6 +121,7 @@ def _save_cycle_stats(
     set_setting("pipeline_last_run_at", datetime.utcnow().isoformat())
     set_setting("pipeline_last_ingest_count", ingest_count)
     set_setting("pipeline_last_drafts_created", drafts_created)
+    set_setting("pipeline_last_filter_kept", filter_kept)
     set_setting("pipeline_last_expired", expired)
     set_setting("pipeline_last_error", error)
     if ingest_by_source is not None:
@@ -189,8 +192,10 @@ async def run_pipeline_cycle(*, force: bool = False) -> dict:
 
             headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
             headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
+            filter_kept = 0
             if headlines and budget.remaining > 0:
                 filtered = filter_headlines(headlines)
+                filter_kept = len(filtered)
                 filtered = select_diverse_for_drafting(filtered, budget.remaining * 2)
                 if filtered:
                     draft_posts(filtered, budget)
@@ -198,6 +203,7 @@ async def run_pipeline_cycle(*, force: bool = False) -> dict:
             _save_cycle_stats(
                 ingest_count=ingest_count,
                 drafts_created=budget.created,
+                filter_kept=filter_kept,
                 expired=expired,
                 ingest_by_source=ingest_by_source,
             )

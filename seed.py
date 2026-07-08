@@ -5,6 +5,7 @@ import hashlib
 
 from database import get_session, init_db
 from models import Draft, Headline
+from pipeline.story_key import title_fingerprint
 
 SEED_HEADLINES = [
     {
@@ -96,6 +97,7 @@ def seed(force: bool = False) -> None:
                 summary=item["summary"],
                 published_at=published,
                 hash=chash,
+                title_fp=title_fingerprint(item["title"]),
                 status="drafted",
             )
             session.add(headline)

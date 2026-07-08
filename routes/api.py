@@ -278,6 +278,26 @@ def regenerate_draft_route(draft_id: int, request: Request):
     return {"ok": True, "draft": _draft_to_dict(draft, headline)}
 
 
+@router.post("/drafts/clear-samples")
+def clear_sample_drafts(request: Request):
+    """Remove pending sample/seed drafts (example.com URLs)."""
+    require_auth(request)
+    cleared = 0
+    with get_session() as session:
+        rows = session.exec(
+            select(Draft, Headline)
+            .join(Headline, Draft.headline_id == Headline.id)
+            .where(Draft.status.in_(("pending", "scheduled")))
+        ).all()
+        for draft, headline in rows:
+            if "example.com" in (headline.url or ""):
+                draft.status = "stale"
+                session.add(draft)
+                cleared += 1
+        session.commit()
+    return {"ok": True, "cleared": cleared}
+
+
 @router.get("/history")
 def get_history(request: Request):
     require_auth(request)

@@ -412,7 +412,7 @@ function renderDraftCard(d) {
   return `
     <article class="post-card" data-id="${d.id}" data-impact="${esc(d.impact)}">
       <div class="post-head">
-        <span class="post-source">${source}${d.is_seed ? ' <span class="seed-badge">Sample</span>' : ''}${scheduledBadge}</span>
+        <span class="post-source">${source}${d.is_seed ? ' <span class="seed-badge">Sample — not live news</span>' : ''}${scheduledBadge}</span>
         <div class="post-head-actions">
           <button type="button" class="btn-icon" data-action="copy" data-id="${d.id}" title="Copy text" aria-label="Copy draft text">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
@@ -829,11 +829,22 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
   btn.textContent = 'Fetching…';
   try {
     const res = await api('/pipeline/run', { method: 'POST' });
+    const ingested = res.last_ingest_count || 0;
+    const drafts = res.last_drafts_created || 0;
+    const filtered = res.last_filter_kept || 0;
     const parts = [];
-    if (res.last_ingest_count) parts.push(`${res.last_ingest_count} new headline${res.last_ingest_count === 1 ? '' : 's'}`);
-    if (res.last_drafts_created) parts.push(`${res.last_drafts_created} draft${res.last_drafts_created === 1 ? '' : 's'}`);
+    if (ingested) parts.push(`${ingested} new headline${ingested === 1 ? '' : 's'}`);
+    if (filtered) parts.push(`${filtered} passed filter`);
+    if (drafts) parts.push(`${drafts} new draft${drafts === 1 ? '' : 's'}`);
     if (res.last_expired) parts.push(`${res.last_expired} expired`);
-    showToast(parts.length ? parts.join(', ') : 'Fetch complete — no new stories', 'success');
+    if (!ingested && !drafts) {
+      showToast(
+        'No new stories — queue unchanged. Reject old posts, clear samples, or add Topics.',
+        'success',
+      );
+    } else {
+      showToast(parts.length ? parts.join(', ') : 'Fetch complete', 'success');
+    }
     loadSettings();
     if (currentTab === 'queue') loadQueue();
   } catch (err) {
@@ -841,6 +852,20 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Fetch news now';
+  }
+});
+
+document.getElementById('clear-samples').addEventListener('click', async () => {
+  const btn = document.getElementById('clear-samples');
+  btn.disabled = true;
+  try {
+    const res = await api('/drafts/clear-samples', { method: 'POST' });
+    showToast(res.cleared ? `Cleared ${res.cleared} sample draft(s)` : 'No sample drafts found', 'success');
+    if (currentTab === 'queue') loadQueue();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
   }
 });
 
