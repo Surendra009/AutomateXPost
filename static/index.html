@@ -38,21 +38,32 @@
   <div id="app" class="app hidden">
     <header class="topbar">
       <div class="topbar-main">
-        <h1 id="screen-title">Queue</h1>
-        <p id="header-subtitle" class="topbar-sub">Review pending drafts</p>
+        <h1 id="screen-title">Stock</h1>
+        <p id="header-subtitle" class="topbar-sub">Earnings, tickers &amp; markets</p>
       </div>
       <div id="queue-badge" class="count-pill hidden">0</div>
     </header>
 
     <div class="page">
-      <!-- Queue -->
-      <section id="queue-screen" class="page-section">
-        <div id="pull-indicator" class="refresh-hint hidden">Release to refresh</div>
-        <div id="queue-list" class="queue"></div>
-        <div id="queue-empty" class="empty hidden">
-          <div class="empty-icon">✓</div>
-          <h2>Queue empty</h2>
-          <p>New drafts appear when the pipeline runs</p>
+      <!-- Stock queue -->
+      <section id="stock-screen" class="page-section">
+        <div id="stock-pull-indicator" class="refresh-hint hidden">Release to refresh</div>
+        <div id="stock-list" class="queue"></div>
+        <div id="stock-empty" class="empty hidden">
+          <div class="empty-icon">📈</div>
+          <h2>No stock drafts</h2>
+          <p>Earnings, AI, and market news will show here</p>
+        </div>
+      </section>
+
+      <!-- Politics queue -->
+      <section id="politics-screen" class="page-section hidden">
+        <div id="politics-pull-indicator" class="refresh-hint hidden">Release to refresh</div>
+        <div id="politics-list" class="queue"></div>
+        <div id="politics-empty" class="empty hidden">
+          <div class="empty-icon">🌐</div>
+          <h2>No politics drafts</h2>
+          <p>Geopolitics and policy stories will show here</p>
         </div>
       </section>
 
@@ -96,7 +107,7 @@
               <button type="button" class="chat-chip" data-query="NVDA">NVDA drafts</button>
               <button type="button" class="chat-chip" data-query="earnings beat">Earnings beats</button>
               <button type="button" class="chat-chip" data-query="AI agents" data-news="1">AI agents news</button>
-              <button type="button" class="chat-chip" data-query="semiconductor">Semiconductors</button>
+              <button type="button" class="chat-chip" data-query="Iran oil markets">Iran / oil</button>
             </div>
           </div>
         </div>
@@ -253,21 +264,26 @@
     </div>
 
     <nav class="tabbar">
-      <button type="button" class="tab active" data-tab="queue">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
-        <span>Queue</span>
-        <em id="nav-badge" class="tab-badge hidden">0</em>
+      <button type="button" class="tab active" data-tab="stock">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-6 4 4 8-10"/><path d="M14 5h7v7"/></svg>
+        <span>Stock</span>
+        <em id="stock-badge" class="tab-badge hidden">0</em>
+      </button>
+      <button type="button" class="tab" data-tab="politics">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+        <span>Politics</span>
+        <em id="politics-badge" class="tab-badge hidden">0</em>
       </button>
       <button type="button" class="tab" data-tab="history">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
         <span>History</span>
       </button>
       <button type="button" class="tab" data-tab="chat">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
         <span>Chat</span>
       </button>
       <button type="button" class="tab" data-tab="settings">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
         <span>Settings</span>
       </button>
     </nav>

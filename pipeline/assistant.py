@@ -12,6 +12,7 @@ from config import MAX_WEB_RESULTS_PER_QUERY
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline, Post
+from pipeline.draft_lane import draft_lane
 from pipeline.freshness import format_age
 from pipeline.llm import call_chat_llm
 from pipeline.noise import is_title_noise
@@ -178,6 +179,7 @@ def _draft_hit(draft: Draft, headline: Headline) -> dict[str, Any]:
         "format": draft.format,
         "impact": draft.impact,
         "category": draft.category,
+        "lane": draft_lane(draft.category, draft.tickers),
         "tickers": draft.tickers.split(",") if draft.tickers else [],
         "confidence": draft.confidence,
         "created_at": draft.created_at.isoformat(),

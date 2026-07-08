@@ -21,6 +21,7 @@ from logging_config import setup_logging
 from models import Draft, Headline, Post
 from pipeline.analytics import analytics_summary, refresh_post_metrics
 from pipeline.assistant import chat_search
+from pipeline.draft_lane import draft_lane, lane_counts
 from pipeline.llm import chat_llm_status
 from pipeline.draft import regenerate_draft
 from pipeline.feedback import record_rejection
@@ -186,11 +187,20 @@ def get_queue(request: Request):
             reverse=True,
         )
 
-        result = [_draft_to_dict(d, h) for d, h in pairs if h]
+        result = []
+        for d, h in pairs:
+            if not h:
+                continue
+            item = _draft_to_dict(d, h)
+            item["lane"] = draft_lane(d.category, d.tickers)
+            result.append(item)
+
+    counts = lane_counts(result)
 
     return {
         "drafts": result,
         "count": len(result),
+        "counts": counts,
         "dedup_mode": get_dedup_mode(),
         "hidden_duplicates": hidden_duplicates,
         "rejection_reasons": list(REJECTION_REASONS),
