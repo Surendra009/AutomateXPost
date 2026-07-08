@@ -10,8 +10,12 @@ from pipeline.ai_news import AI_SOURCES, is_ai_source, mentions_ai
 # Higher score = preferred for drafting
 SOURCE_PRIORITY: dict[str, int] = {
     "Finnhub Earnings": 100,
+    "Web Search · earnings": 98,
+    "Web Search · calendar": 96,
     "Finnhub Macro": 95,
+    "Web Search · mergers": 94,
     "Finnhub Company": 92,
+    "Web Search · company": 91,
     "Finnhub watchlist": 90,
     "Finnhub": 80,
     "SEC EDGAR 8-K": 75,

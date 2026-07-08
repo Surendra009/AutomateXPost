@@ -45,40 +45,40 @@ def get_pipeline_status() -> dict:
 
 
 def _active_news_sources() -> list[dict]:
-    from config import AI_RSS_FEEDS, RSS_FEEDS
+    from config import AI_RSS_FEEDS, RSS_FEEDS, WEB_SEARCH_ENABLED
     from pipeline.finnhub_api import get_finnhub_key
 
     sources = [{"name": name, "type": "rss", "enabled": True} for name, _ in RSS_FEEDS]
     sources.extend({"name": name, "type": "ai", "enabled": True} for name, _ in AI_RSS_FEEDS)
+    sources.append({
+        "name": "Web Search (Google News)",
+        "type": "search",
+        "enabled": WEB_SEARCH_ENABLED,
+        "hint": "Primary for earnings, mergers, and company news",
+    })
     fh_ok = bool(get_finnhub_key())
     sources.append({
         "name": "Finnhub Earnings",
         "type": "api",
         "enabled": fh_ok,
-        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
+        "hint": None if fh_ok else "Optional supplement — set FINNHUB_KEY",
     })
     sources.append({
         "name": "Finnhub Macro",
         "type": "api",
         "enabled": fh_ok,
-        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
+        "hint": "Supplement" if fh_ok else "Optional — set FINNHUB_KEY",
     })
     sources.append({
         "name": "Finnhub Company",
         "type": "api",
         "enabled": fh_ok,
-        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
+        "hint": "Supplement when watchlist is set" if fh_ok else "Optional — set FINNHUB_KEY",
     })
     sources.append({
         "name": "SEC 8-K (structured)",
         "type": "api",
         "enabled": True,
-    })
-    sources.append({
-        "name": "Finnhub general",
-        "type": "api",
-        "enabled": fh_ok,
-        "hint": None if fh_ok else "Set FINNHUB_KEY in Railway Variables",
     })
     return sources
 

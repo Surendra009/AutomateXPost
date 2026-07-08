@@ -62,6 +62,16 @@ CLASSIFICATION_CACHE_HOURS = 12  # reuse Haiku classifications within this windo
 REJECTION_LEARN_THRESHOLD = 2  # rejects before a title shape is treated as noise
 REJECTION_FUZZY_THRESHOLD = 88  # fuzzy match against learned rejected titles
 
+WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() in ("1", "true", "yes")
+MAX_WEB_RESULTS_PER_QUERY = int(os.getenv("MAX_WEB_RESULTS_PER_QUERY", "6"))
+MAX_WEB_TICKERS_PER_CYCLE = int(os.getenv("MAX_WEB_TICKERS_PER_CYCLE", "8"))
+# When web search is on, skip Finnhub general headlines (RSS + web cover market news)
+FINNHUB_GENERAL_SUPPLEMENT = os.getenv("FINNHUB_GENERAL_SUPPLEMENT", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # Market news RSS feeds (Reuters feed is deprecated/broken — use alternatives below)
 RSS_FEEDS = [
     ("CNBC Markets", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"),
