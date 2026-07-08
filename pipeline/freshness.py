@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from sqlmodel import select
 
+from config import MAX_EARNINGS_AGE_HOURS
 from pipeline.cycle_context import get_max_news_age_hours
 from database import get_session
 from logging_config import setup_logging
@@ -12,12 +13,18 @@ from models import Headline
 logger = setup_logging()
 
 
-def news_cutoff() -> datetime:
-    return datetime.utcnow() - timedelta(hours=get_max_news_age_hours())
+def max_age_hours_for_category(category: str | None) -> int:
+    if category == "earnings":
+        return MAX_EARNINGS_AGE_HOURS
+    return get_max_news_age_hours()
 
 
-def is_fresh(published_at: datetime) -> bool:
-    return published_at >= news_cutoff()
+def news_cutoff(category: str | None = None) -> datetime:
+    return datetime.utcnow() - timedelta(hours=max_age_hours_for_category(category))
+
+
+def is_fresh(published_at: datetime, category: str | None = None) -> bool:
+    return published_at >= news_cutoff(category)
 
 
 def age_minutes(dt: datetime) -> int:

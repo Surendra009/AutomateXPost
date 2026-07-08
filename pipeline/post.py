@@ -12,9 +12,9 @@ from sqlmodel import select
 
 from config import (
     DRY_RUN,
+    EARNINGS_STALE_DRAFT_HOURS,
     ENABLE_POST_MEDIA,
     ENABLE_THREADS,
-    MAX_NEWS_AGE_HOURS,
     STALE_DRAFT_HOURS,
     X_POST_MAX_RETRIES,
     get_settings,
@@ -22,7 +22,7 @@ from config import (
 from database import count_posts_today, get_session, last_post_time
 from logging_config import setup_logging
 from models import Draft, Headline, Post
-from pipeline.freshness import is_fresh
+from pipeline.freshness import is_fresh, max_age_hours_for_category
 from pipeline.url_resolve import fetch_og_image
 
 logger = setup_logging()
@@ -52,14 +52,16 @@ def check_safety_rails(draft: Draft, daily_cap: int, cooldown_minutes: int) -> N
 
     with get_session() as session:
         headline = session.get(Headline, draft.headline_id)
-        if headline and not is_fresh(headline.published_at):
+        if headline and not is_fresh(headline.published_at, draft.category):
+            max_h = max_age_hours_for_category(draft.category)
             raise PostingError(
-                f"Story is older than {MAX_NEWS_AGE_HOURS} hours — too stale to post"
+                f"Story is older than {max_h} hours — too stale to post"
             )
 
+    stale_hours = EARNINGS_STALE_DRAFT_HOURS if draft.category == "earnings" else STALE_DRAFT_HOURS
     age = datetime.utcnow() - draft.created_at
-    if age > timedelta(hours=STALE_DRAFT_HOURS):
-        raise PostingError(f"Draft is older than {STALE_DRAFT_HOURS} hours (stale)")
+    if age > timedelta(hours=stale_hours):
+        raise PostingError(f"Draft is older than {stale_hours} hours (stale)")
 
     today_count = count_posts_today()
     if today_count >= daily_cap:

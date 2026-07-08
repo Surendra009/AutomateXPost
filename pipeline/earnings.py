@@ -16,6 +16,7 @@ from config import (
 )
 from pipeline.dedup import was_recently_drafted
 from pipeline.draft_budget import DraftBudget
+from pipeline.earnings_freshness import estimate_earnings_release_utc, is_earnings_fresh
 from pipeline.story_key import title_fingerprint
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
@@ -285,12 +286,24 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                 if was_recently_drafted(title, EARNINGS_SOURCE):
                     continue
 
+                release_at = estimate_earnings_release_utc(
+                    date_str, event.get("hour"), has_actuals=True
+                )
+                if release_at is None or not is_earnings_fresh(release_at):
+                    logger.debug(
+                        "Skipping stale earnings result %s %s (release %s)",
+                        symbol,
+                        date_str,
+                        release_at,
+                    )
+                    continue
+
                 headline = Headline(
                     source=EARNINGS_SOURCE,
                     url=_event_url(symbol, date_str),
                     title=title,
                     summary=summary,
-                    published_at=now,
+                    published_at=release_at,
                     hash=chash,
                     title_fp=title_fingerprint(title),
                     status="drafted",
@@ -335,12 +348,14 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
             if was_recently_drafted(title, EARNINGS_SOURCE):
                 continue
 
+            release_at = estimate_earnings_release_utc(date_str, event.get("hour")) or now
+
             headline = Headline(
                 source=EARNINGS_SOURCE,
                 url=_event_url(symbol, date_str),
                 title=title,
                 summary=summary,
-                published_at=now,
+                published_at=release_at,
                 hash=chash,
                 title_fp=title_fingerprint(title),
                 status="drafted",

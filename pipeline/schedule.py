@@ -7,6 +7,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from config import (
+    EARNINGS_WINDOW_END_HOUR,
+    MARKET_CLOSE_HOUR,
     OVERNIGHT_CATCHUP_HOUR,
     OVERNIGHT_CATCHUP_MAX_AGE_HOURS,
     OVERNIGHT_QUIET_END_HOUR,
@@ -154,12 +156,21 @@ def schedule_status(now: datetime | None = None) -> dict:
         "quiet_hours": is_overnight_quiet_hours(now),
         "quiet_window": f"{OVERNIGHT_QUIET_START_HOUR}:00–{OVERNIGHT_QUIET_END_HOUR}:00",
         "market_hours": is_market_hours(now),
+        "earnings_window": is_earnings_window(now),
         "pipeline_interval_seconds": pipeline_interval_seconds(now),
         "next_mode": decision.mode if decision.run else "skipped",
         "schedule_reason": decision.reason,
         "catchup_completed_today": catchup_completed_today(now),
         "last_overnight_catchup_at": get_setting(CATCHUP_SETTING_KEY),
     }
+
+
+def is_earnings_window(now: datetime | None = None) -> bool:
+    """Mon–Fri after the close through early evening — faster polling for AMC results."""
+    now = now or local_now()
+    if now.weekday() >= 5:
+        return False
+    return MARKET_CLOSE_HOUR <= now.hour < EARNINGS_WINDOW_END_HOUR
 
 
 def is_market_hours(now: datetime | None = None) -> bool:
@@ -175,6 +186,6 @@ def is_market_hours(now: datetime | None = None) -> bool:
 def pipeline_interval_seconds(now: datetime | None = None) -> int:
     from config import MARKET_HOURS_INTERVAL_SECONDS, PIPELINE_INTERVAL_SECONDS
 
-    if is_market_hours(now):
+    if is_market_hours(now) or is_earnings_window(now):
         return MARKET_HOURS_INTERVAL_SECONDS
     return PIPELINE_INTERVAL_SECONDS

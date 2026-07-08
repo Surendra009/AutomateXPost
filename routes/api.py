@@ -96,7 +96,7 @@ def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
         "draft_age_minutes": draft_mins,
         "story_age": story_age,
         "story_age_minutes": story_mins,
-        "story_fresh": is_fresh(headline.published_at) if headline else True,
+        "story_fresh": is_fresh(headline.published_at, draft.category) if headline else True,
         "is_seed": is_seed,
         "headline": {
             "source": headline.source if headline else "",
@@ -183,7 +183,12 @@ def get_queue(request: Request):
             pairs = [(d, headlines.get(d.headline_id)) for d in drafts if d.headline_id in headlines]
 
         pairs.sort(
-            key=lambda p: p[0].created_at.timestamp() if p[0].created_at else 0,
+            key=lambda p: (
+                1 if (p[1] and is_fresh(p[1].published_at, p[0].category)) else 0,
+                {"high": 3, "med": 2, "low": 1}.get(p[0].impact or "med", 2),
+                p[1].published_at.timestamp() if p[1] and p[1].published_at else 0,
+                p[0].created_at.timestamp() if p[0].created_at else 0,
+            ),
             reverse=True,
         )
 

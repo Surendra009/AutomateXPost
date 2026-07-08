@@ -446,10 +446,14 @@ function renderDraftCard(d) {
       </div>`;
   }
 
+  const isEarnings = d.category === 'earnings';
   const draftMins = d.draft_age_minutes ?? 0;
-  const draftAgeClass = draftMins >= 420 ? 'is-stale' : draftMins >= 360 ? 'is-aging' : '';
+  const draftStaleMins = isEarnings ? 120 : 420;
+  const draftAgingMins = isEarnings ? 90 : 360;
+  const draftAgeClass = draftMins >= draftStaleMins ? 'is-stale' : draftMins >= draftAgingMins ? 'is-aging' : '';
   const storyMins = d.story_age_minutes ?? 0;
-  const storyAgeClass = !d.story_fresh ? 'is-stale-story' : storyMins >= 180 ? 'is-aging-story' : '';
+  const storyAgingMins = isEarnings ? 60 : 180;
+  const storyAgeClass = !d.story_fresh ? 'is-stale-story' : storyMins >= storyAgingMins ? 'is-aging-story' : '';
   const scheduledBadge = d.status === 'scheduled' && d.scheduled_at
     ? `<span class="scheduled-badge">Scheduled ${formatDate(d.scheduled_at)}</span>` : '';
   const postError = d.post_error
