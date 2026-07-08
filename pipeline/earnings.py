@@ -9,7 +9,11 @@ from typing import Any
 import httpx
 from sqlmodel import select
 
-from config import MAX_EARNINGS_DRAFTS_PER_CYCLE
+from config import (
+    EARNINGS_PREVIEW_DAYS_FORWARD,
+    MAX_EARNINGS_DRAFTS_PER_CYCLE,
+    MAX_MARKET_EARNINGS_DRAFTS_PER_CYCLE,
+)
 from pipeline.dedup import was_recently_drafted
 from pipeline.draft_budget import DraftBudget
 from pipeline.story_key import title_fingerprint
@@ -17,7 +21,7 @@ from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline
-from pipeline.watchlist_scope import in_watchlist
+from pipeline.watchlist_scope import in_watchlist, normalized_watchlist
 
 logger = setup_logging()
 
@@ -215,18 +219,16 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
     if not get_finnhub_key():
         return 0, 0
 
-    watchlist = get_setting("watchlist", [])
-    if not watchlist:
-        return 0, 0
+    watchlist = normalized_watchlist(get_setting("watchlist", []))
+    has_watchlist = bool(watchlist)
 
     today = datetime.utcnow().date()
     yesterday = today - timedelta(days=1)
-    events: list[dict[str, Any]] = []
-    events.extend(fetch_earnings_calendar(yesterday.isoformat(), today.isoformat()))
+    preview_end = today + timedelta(days=EARNINGS_PREVIEW_DAYS_FORWARD)
+    events = fetch_earnings_calendar(yesterday.isoformat(), preview_end.isoformat())
 
-    # Deduplicate by symbol+date+quarter
     seen: set[str] = set()
-    unique_events = []
+    unique_events: list[dict[str, Any]] = []
     for ev in events:
         key = f"{ev.get('symbol')}|{ev.get('date')}|{ev.get('quarter')}|{ev.get('year')}"
         if key in seen:
@@ -236,12 +238,17 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
 
     ingested = 0
     drafts_created = 0
+    market_drafts = 0
     now = datetime.utcnow()
 
     with get_session() as session:
         for event in unique_events:
             symbol = (event.get("symbol") or "").upper()
-            if not in_watchlist(symbol, watchlist):
+            if not symbol:
+                continue
+
+            on_watchlist = has_watchlist and in_watchlist(symbol, watchlist)
+            if has_watchlist and not on_watchlist:
                 continue
 
             date_str = event.get("date") or today.isoformat()
@@ -264,6 +271,13 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                 if not built:
                     continue
                 title, summary, draft_text, impact = built
+
+                if not has_watchlist:
+                    if impact != "high":
+                        continue
+                    if market_drafts >= MAX_MARKET_EARNINGS_DRAFTS_PER_CYCLE:
+                        continue
+
                 kind = "result"
                 chash = _event_hash(symbol, date_str, quarter, year, kind)
                 if _headline_exists(chash):
@@ -298,12 +312,16 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                 session.add(draft)
                 ingested += 1
                 drafts_created += 1
+                if not has_watchlist:
+                    market_drafts += 1
                 if budget:
                     budget.try_take(1)
                 continue
 
-            # Preview for today's reports without actuals yet
-            if event_date != today:
+            # Previews for watchlist tickers reporting today through preview window
+            if not on_watchlist:
+                continue
+            if event_date < today or event_date > preview_end:
                 continue
 
             built = _build_preview(event)

@@ -38,6 +38,7 @@ from pipeline.schedule import (
 )
 from pipeline.sec_filings import clear_sec_feed_cache, process_sec_filings
 from pipeline.scheduled_posts import process_scheduled_posts
+from pipeline.earnings_calendar import get_earnings_pipeline_summary
 from pipeline.push import notify_new_drafts
 
 logger = setup_logging()
@@ -60,6 +61,7 @@ def get_pipeline_status() -> dict:
         "last_ingest_by_source": get_setting("pipeline_last_ingest_by_source", {}),
         "news_sources": _active_news_sources(),
         "finnhub": get_finnhub_status(),
+        "earnings": get_earnings_pipeline_summary(),
         "schedule": schedule_status(),
         "feedback": feedback_stats(),
     }

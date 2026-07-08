@@ -230,6 +230,15 @@ function renderChatResults(data) {
     return el;
   });
 
+  addSection(data.earnings || [], (e) => {
+    const el = document.createElement('div');
+    el.className = 'chat-result';
+    el.innerHTML = `
+      <div class="chat-result-head"><span>Earnings · ${esc(e.source || 'Finnhub')}</span><span>${esc(e.date || '')}</span></div>
+      <p>${esc(e.label || e.symbol)}</p>`;
+    return el;
+  });
+
   addSection(data.news || [], (n) => {
     const el = document.createElement('div');
     el.className = 'chat-result';
@@ -729,6 +738,23 @@ async function loadSettings() {
         <span>Drafts created</span>
         <span>${pipe.last_drafts_created ?? 0}</span>
       </div>
+      ${(() => {
+        const earn = pipe.earnings || {};
+        let html = '';
+        if (earn.configured === false) {
+          html += '<div class="status-row"><span>Earnings</span><span class="status-no">Needs FINNHUB_KEY</span></div>';
+        } else if (earn.watchlist_count > 0) {
+          html += `<div class="status-row"><span>Earnings today</span><span>${earn.reporting_today ?? 0} watchlist</span></div>`;
+        }
+        if (earn.upcoming?.length) {
+          const labels = earn.upcoming.slice(0, 4).map((e) => e.label || e.symbol).join(' · ');
+          html += `<div class="pipeline-sources">Upcoming: ${esc(labels)}</div>`;
+        }
+        if (earn.hint) {
+          html += `<p class="source-hint">${esc(earn.hint)}</p>`;
+        }
+        return html;
+      })()}
       ${pipe.last_expired ? `<div class="status-row"><span>Expired stale</span><span>${pipe.last_expired}</span></div>` : ''}
       ${(pipe.feedback?.learned_patterns ?? 0) > 0 ? `<div class="status-row"><span>Learned noise</span><span>${pipe.feedback.learned_patterns} patterns</span></div>` : ''}
       ${err}`;
