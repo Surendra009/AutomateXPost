@@ -11,10 +11,12 @@ import httpx
 from sqlmodel import select
 
 from config import (
+    AI_RSS_FEEDS,
+    FINNHUB_GENERAL_SUPPLEMENT,
     MAX_NEWS_AGE_HOURS,
     RSS_FEEDS,
-    AI_RSS_FEEDS,
     SEC_USER_AGENT,
+    WEB_SEARCH_ENABLED,
     get_finnhub_key,
 )
 from database import get_session, get_setting
@@ -25,6 +27,7 @@ from pipeline.freshness import is_fresh, news_cutoff
 from pipeline.dedup_mode import dedup_at_ingest
 from pipeline.ingest_dedup import load_ingest_dedup_index
 from pipeline.story_key import title_fingerprint
+from pipeline.web_news import fetch_web_news
 
 logger = setup_logging()
 
@@ -172,8 +175,15 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
 
     # SEC 8-K and Finnhub company news handled by structured processors (no double-fetch)
 
-    finnhub_general = fetch_finnhub_general_news()
-    source_batches.append(("Finnhub", finnhub_general))
+    if WEB_SEARCH_ENABLED:
+        web_items = fetch_web_news()
+        if web_items:
+            source_batches.append(("Web Search", web_items))
+
+    if get_finnhub_key() and (FINNHUB_GENERAL_SUPPLEMENT or not WEB_SEARCH_ENABLED):
+        finnhub_general = fetch_finnhub_general_news()
+        if finnhub_general:
+            source_batches.append(("Finnhub", finnhub_general))
 
     per_source: dict[str, int] = {}
     skipped_stale: dict[str, int] = {}
