@@ -14,6 +14,8 @@ from pipeline.finnhub_api import finnhub_get, get_finnhub_key, parse_finnhub_tim
 from pipeline.freshness import is_fresh
 from pipeline.noise import is_title_noise
 from pipeline.structured_common import content_hash, save_structured_draft
+from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts
+from pipeline.enrich import fetch_article_text
 from pipeline.watchlist_scope import normalized_watchlist
 
 logger = setup_logging()
@@ -75,19 +77,27 @@ def _beat_miss_word(match: re.Match) -> str:
     return "beat"
 
 
-def _build_draft(symbol: str, headline: str, summary: str) -> tuple[str, str, str, str, str, float] | None:
+def _build_draft(
+    symbol: str,
+    headline: str,
+    summary: str,
+    url: str = "",
+) -> tuple[str, str, str, str, str, float] | None:
     text = f"{headline} {summary}"
     bm = BEAT_MISS.search(headline)
 
     if bm and EARNINGS_CONTEXT.search(text):
         verb = _beat_miss_word(bm)
-        line1 = f"{symbol} {verb} quarterly earnings expectations"
-        if verb == "beat":
-            line2 = "Stock likely repricing on the upside surprise"
-        elif verb == "missed":
-            line2 = "Stock likely repricing on the disappointment"
-        else:
-            line2 = "Results largely in line with the street"
+        facts = extract_earnings_facts(text)
+        lines = build_earnings_lines(symbol, verb, facts)
+        if not lines and url:
+            article = fetch_article_text(url)
+            if article:
+                facts = extract_earnings_facts(f"{text} {article[:2500]}")
+                lines = build_earnings_lines(symbol, verb, facts)
+        if not lines:
+            return None
+        line1, line2 = lines
         impact = "high" if verb in ("beat", "missed") else "med"
         fmt = "BREAKING"
         confidence = 0.9
@@ -174,7 +184,7 @@ def process_company_news(budget: DraftBudget | None = None) -> tuple[int, int]:
             if not _ticker_matches_headline(ticker, headline):
                 continue
 
-            built = _build_draft(ticker, headline, summary)
+            built = _build_draft(ticker, headline, summary, url)
             if not built:
                 continue
 
