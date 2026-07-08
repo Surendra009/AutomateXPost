@@ -11,11 +11,9 @@ import httpx
 from sqlmodel import select
 
 from config import (
-    DEFAULT_FINNHUB_TICKERS,
     MAX_NEWS_AGE_HOURS,
     RSS_FEEDS,
     AI_RSS_FEEDS,
-    SEC_EDGAR_8K_FEED,
     SEC_USER_AGENT,
     get_finnhub_key,
 )
@@ -171,15 +169,10 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
         items = fetch_rss_feed(source, url)
         source_batches.append((source, items))
 
-    sec_items = fetch_sec_edgar_feed()
-    source_batches.append((SEC_EDGAR_8K_FEED[0], sec_items))
+    # SEC 8-K and Finnhub company news handled by structured processors (no double-fetch)
 
     finnhub_general = fetch_finnhub_general_news()
     source_batches.append(("Finnhub", finnhub_general))
-
-    finnhub_company = fetch_finnhub_company_news(watchlist or DEFAULT_FINNHUB_TICKERS)
-    if finnhub_company:
-        source_batches.append(("Finnhub watchlist", finnhub_company))
 
     per_source: dict[str, int] = {}
     skipped_stale: dict[str, int] = {}

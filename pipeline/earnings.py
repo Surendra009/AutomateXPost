@@ -10,6 +10,9 @@ import httpx
 from sqlmodel import select
 
 from config import MAX_EARNINGS_DRAFTS_PER_CYCLE
+from pipeline.dedup import was_recently_drafted
+from pipeline.draft_budget import DraftBudget
+from pipeline.story_key import title_fingerprint
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
 from logging_config import setup_logging
@@ -222,7 +225,7 @@ def _pending_draft_for_hash(content_hash: str) -> bool:
         return draft is not None
 
 
-def process_earnings() -> tuple[int, int]:
+def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
     """Fetch earnings calendar and create preview/result drafts. Returns (ingested, drafts)."""
     if not get_finnhub_key():
         return 0, 0
@@ -262,6 +265,8 @@ def process_earnings() -> tuple[int, int]:
             except ValueError:
                 continue
 
+            if budget is not None and budget.remaining <= 0:
+                break
             if drafts_created >= MAX_EARNINGS_DRAFTS_PER_CYCLE:
                 break
 
@@ -275,6 +280,8 @@ def process_earnings() -> tuple[int, int]:
                 chash = _event_hash(symbol, date_str, quarter, year, kind)
                 if _headline_exists(chash):
                     continue
+                if was_recently_drafted(title, EARNINGS_SOURCE):
+                    continue
 
                 headline = Headline(
                     source=EARNINGS_SOURCE,
@@ -283,6 +290,7 @@ def process_earnings() -> tuple[int, int]:
                     summary=summary,
                     published_at=now,
                     hash=chash,
+                    title_fp=title_fingerprint(title),
                     status="drafted",
                 )
                 session.add(headline)
@@ -302,6 +310,8 @@ def process_earnings() -> tuple[int, int]:
                 session.add(draft)
                 ingested += 1
                 drafts_created += 1
+                if budget:
+                    budget.try_take(1)
                 continue
 
             # Preview for today's reports without actuals yet
@@ -316,6 +326,8 @@ def process_earnings() -> tuple[int, int]:
             chash = _event_hash(symbol, date_str, quarter, year, kind)
             if _headline_exists(chash) or _pending_draft_for_hash(chash):
                 continue
+            if was_recently_drafted(title, EARNINGS_SOURCE):
+                continue
 
             headline = Headline(
                 source=EARNINGS_SOURCE,
@@ -324,6 +336,7 @@ def process_earnings() -> tuple[int, int]:
                 summary=summary,
                 published_at=now,
                 hash=chash,
+                title_fp=title_fingerprint(title),
                 status="drafted",
             )
             session.add(headline)
@@ -343,6 +356,8 @@ def process_earnings() -> tuple[int, int]:
             session.add(draft)
             ingested += 1
             drafts_created += 1
+            if budget:
+                budget.try_take(1)
 
         session.commit()
 

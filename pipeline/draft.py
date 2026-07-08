@@ -9,6 +9,7 @@ from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
 from pipeline.ai_news import infer_ai_tickers
+from pipeline.draft_budget import DraftBudget
 from pipeline.dedup import was_recently_drafted
 from pipeline.enrich import get_article_text_for_draft
 from pipeline.filter import _call_claude, _parse_json_array
@@ -172,14 +173,22 @@ def _commit_draft(
     return True
 
 
-def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
+def draft_posts(
+    filtered: list[tuple[Headline, dict]],
+    budget: DraftBudget | None = None,
+) -> int:
     if not filtered:
         return 0
 
+    cap = budget.remaining if budget else MAX_DRAFTS_PER_CYCLE
     created = 0
     template_count = 0
     for headline, classification in filtered:
-        if created >= MAX_DRAFTS_PER_CYCLE:
+        if budget is not None:
+            if budget.remaining <= 0:
+                logger.info("Draft cap reached (%d/cycle)", budget.limit)
+                break
+        elif created >= cap:
             logger.info("Draft cap reached (%d/cycle)", MAX_DRAFTS_PER_CYCLE)
             break
 
@@ -206,6 +215,8 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
                 impact=template.impact,
                 category=template.category,
             ):
+                if budget:
+                    budget.try_take(1)
                 created += 1
                 template_count += 1
                 logger.debug("Template draft (%s): %s", template.category, headline.title[:60])
@@ -224,6 +235,7 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
         draft_data = _parse_draft_response(raw)
         if not draft_data:
             logger.warning("Unparseable draft JSON for headline %s", headline.id)
+            _discard_headline(headline, "unparseable draft JSON")
             continue
 
         if draft_data.get("skip"):
@@ -251,6 +263,8 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
             tickers=tickers,
             confidence=float(draft_data.get("confidence", 0.5)),
         ):
+            if budget:
+                budget.try_take(1)
             created += 1
 
     llm_count = created - template_count

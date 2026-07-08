@@ -46,6 +46,9 @@ WEEKEND_INTERVAL_HOURS = int(os.getenv("WEEKEND_INTERVAL_HOURS", "3"))  # Sat/Su
 MAX_HEADLINES_PER_CYCLE = 35
 MAX_DRAFTS_PER_CYCLE = 3
 MAX_EARNINGS_DRAFTS_PER_CYCLE = 5
+MAX_MACRO_DRAFTS_PER_CYCLE = 3
+MAX_SEC_DRAFTS_PER_CYCLE = 2
+MAX_COMPANY_NEWS_DRAFTS_PER_CYCLE = 3
 MIN_RELEVANCE_SCORE = 0.75
 MIN_AI_RELEVANCE_SCORE = 0.72  # slightly lower bar for major AI product news
 STALE_DRAFT_HOURS = 4  # pending drafts older than this are auto-removed
@@ -56,6 +59,8 @@ DRAFT_DEDUP_HOURS = 24  # skip LLM if same story was drafted within this window
 INGEST_DEDUP_HOURS = 24  # cross-source title dedup window at ingest
 INGEST_TITLE_FUZZY_THRESHOLD = 88  # fuzzy match across sources (slightly below exact)
 CLASSIFICATION_CACHE_HOURS = 12  # reuse Haiku classifications within this window
+REJECTION_LEARN_THRESHOLD = 2  # rejects before a title shape is treated as noise
+REJECTION_FUZZY_THRESHOLD = 88  # fuzzy match against learned rejected titles
 
 # Market news RSS feeds (Reuters feed is deprecated/broken — use alternatives below)
 RSS_FEEDS = [

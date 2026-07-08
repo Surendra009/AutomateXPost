@@ -4,6 +4,7 @@ import re
 
 from models import Headline
 from pipeline.ai_news import AI_SOURCES, is_ai_source, mentions_ai
+from pipeline.feedback import is_learned_noise
 from pipeline.prioritize import is_generic_wire_noise
 
 # Title patterns that are almost never stock-moving
@@ -45,6 +46,10 @@ def is_obvious_noise(headline: Headline) -> str | None:
 
     if NOISE_PATTERNS.search(headline.title):
         return "noise pattern in title"
+
+    learned = is_learned_noise(headline.title)
+    if learned:
+        return learned
 
     if is_generic_wire_noise(headline):
         return "generic wire headline"
