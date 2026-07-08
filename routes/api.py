@@ -19,6 +19,7 @@ from database import get_all_settings, get_session, get_setting, set_setting
 from logging_config import setup_logging
 from models import Draft, Headline, Post
 from pipeline.analytics import analytics_summary, refresh_post_metrics
+from pipeline.assistant import chat_search
 from pipeline.draft import regenerate_draft
 from pipeline.feedback import record_rejection
 from pipeline.freshness import discard_stale_headlines, format_age, age_minutes, is_fresh
@@ -51,6 +52,11 @@ class RejectRequest(BaseModel):
 class PushSubscribeRequest(BaseModel):
     endpoint: str
     keys: dict
+
+
+class ChatRequest(BaseModel):
+    message: str
+    fetch_news: bool = False
 
 
 class SettingsPatch(BaseModel):
@@ -119,6 +125,17 @@ def logout(response: Response):
 def me(request: Request):
     require_auth(request)
     return {"authenticated": True}
+
+
+@router.post("/chat")
+def post_chat(request: Request, body: ChatRequest):
+    require_auth(request)
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+    if len(message) > 500:
+        raise HTTPException(status_code=400, detail="message too long (max 500)")
+    return chat_search(message, fetch_news=body.fetch_news)
 
 
 @router.get("/queue")

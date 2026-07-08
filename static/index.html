@@ -85,6 +85,32 @@
         <div id="rejected-list" class="list collapsed"></div>
       </section>
 
+      <!-- Chat -->
+      <section id="chat-screen" class="page-section hidden">
+        <div id="chat-thread" class="chat-thread">
+          <div class="chat-welcome">
+            <h2>Search assistant</h2>
+            <p>Find drafts, posted content, or live news by topic, ticker, or keyword.</p>
+            <div class="chat-suggestions" id="chat-suggestions">
+              <button type="button" class="chat-chip" data-query="NVDA">NVDA drafts</button>
+              <button type="button" class="chat-chip" data-query="earnings beat">Earnings beats</button>
+              <button type="button" class="chat-chip" data-query="AI agents" data-news="1">AI agents news</button>
+              <button type="button" class="chat-chip" data-query="semiconductor">Semiconductors</button>
+            </div>
+          </div>
+        </div>
+        <div class="chat-compose">
+          <label class="chat-live-toggle">
+            <input type="checkbox" id="chat-live-news">
+            <span>Live news</span>
+          </label>
+          <div class="add-row">
+            <input type="text" id="chat-input" class="input" placeholder="Search drafts or topics…" maxlength="500" autocomplete="off">
+            <button type="button" id="chat-send" class="btn btn-approve">Send</button>
+          </div>
+        </div>
+      </section>
+
       <!-- Settings -->
       <section id="settings-screen" class="page-section hidden">
         <div class="group">
@@ -233,6 +259,10 @@
       <button type="button" class="tab" data-tab="history">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
         <span>History</span>
+      </button>
+      <button type="button" class="tab" data-tab="chat">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <span>Chat</span>
       </button>
       <button type="button" class="tab" data-tab="settings">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>

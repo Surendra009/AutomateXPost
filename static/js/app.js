@@ -84,10 +84,11 @@ document.querySelectorAll('.tab').forEach((btn) => {
     btn.classList.add('active');
     document.querySelectorAll('.page-section').forEach((s) => s.classList.add('hidden'));
     document.getElementById(`${currentTab}-screen`).classList.remove('hidden');
-    const titles = { queue: 'Queue', history: 'History', settings: 'Settings' };
+    const titles = { queue: 'Queue', history: 'History', chat: 'Chat', settings: 'Settings' };
     const subtitles = {
       queue: 'Review pending drafts',
       history: 'Posted & rejected',
+      chat: 'Search drafts & topics',
       settings: 'Pipeline & limits',
     };
     document.getElementById('screen-title').textContent = titles[currentTab];
@@ -99,6 +100,7 @@ document.querySelectorAll('.tab').forEach((btn) => {
 function loadCurrentTab() {
   if (currentTab === 'queue') loadQueue();
   else if (currentTab === 'history') loadHistory();
+  else if (currentTab === 'chat') initChatScreen();
   else if (currentTab === 'settings') loadSettings();
 }
 
@@ -111,6 +113,179 @@ function startRefresh() {
 
 function stopRefresh() {
   if (refreshTimer) clearInterval(refreshTimer);
+}
+
+// ── Chat assistant ───────────────────────────────────────
+
+let chatBootstrapped = false;
+
+function initChatScreen() {
+  if (chatBootstrapped) return;
+  chatBootstrapped = true;
+
+  document.getElementById('chat-send').addEventListener('click', () => sendChatMessage());
+  document.getElementById('chat-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+
+  document.querySelectorAll('.chat-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.getElementById('chat-input').value = btn.dataset.query || '';
+      document.getElementById('chat-live-news').checked = btn.dataset.news === '1';
+      sendChatMessage();
+    });
+  });
+}
+
+function appendChatBubble(role, text, isLoading = false, data = null) {
+  const thread = document.getElementById('chat-thread');
+  const welcome = thread.querySelector('.chat-welcome');
+  if (welcome) welcome.remove();
+
+  const bubble = document.createElement('div');
+  bubble.className = `chat-bubble ${role}${isLoading ? ' is-loading' : ''}`;
+
+  if (role === 'assistant' && data && !isLoading) {
+    const replyText = document.createElement('div');
+    replyText.textContent = text;
+    bubble.appendChild(replyText);
+    const results = renderChatResults(data);
+    if (results) bubble.appendChild(results);
+  } else {
+    bubble.textContent = text;
+  }
+
+  thread.appendChild(bubble);
+  thread.scrollTop = thread.scrollHeight;
+  return bubble;
+}
+
+function renderChatResults(data) {
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-results';
+  let hasResults = false;
+
+  const addSection = (items, renderItem) => {
+    items.forEach((item) => {
+      wrap.appendChild(renderItem(item));
+      hasResults = true;
+    });
+  };
+
+  addSection(data.drafts || [], (d) => {
+    const el = document.createElement('div');
+    el.className = 'chat-result';
+    const status = d.status === 'pending' ? 'In queue' : d.status;
+    el.innerHTML = `
+      <div class="chat-result-head">
+        <span>Draft · ${esc(status)}</span>
+        <span>${esc(d.age)}</span>
+      </div>
+      <p>${esc(d.text)}</p>
+      <div class="chat-result-actions">
+        ${d.status === 'pending' || d.status === 'scheduled'
+          ? `<button type="button" class="btn btn-secondary" data-open-queue="${d.id}">Open queue</button>`
+          : ''}
+        ${d.headline?.url
+          ? `<a class="btn btn-secondary" href="${esc(d.headline.url)}" target="_blank" rel="noopener">Source</a>`
+          : ''}
+      </div>`;
+    el.querySelector('[data-open-queue]')?.addEventListener('click', () => {
+      document.querySelector('.tab[data-tab="queue"]')?.click();
+    });
+    return el;
+  });
+
+  addSection(data.posted || [], (d) => {
+    const el = document.createElement('div');
+    el.className = 'chat-result';
+    el.innerHTML = `
+      <div class="chat-result-head"><span>Posted</span><span>${esc(d.age)}</span></div>
+      <p>${esc(d.text)}</p>`;
+    return el;
+  });
+
+  addSection(data.headlines || [], (h) => {
+    const el = document.createElement('div');
+    el.className = 'chat-result';
+    el.innerHTML = `
+      <div class="chat-result-head">
+        <span>${esc(h.source)}</span>
+        <span>${esc(h.age)}</span>
+      </div>
+      <p><a href="${esc(h.url)}" target="_blank" rel="noopener">${esc(h.title)}</a></p>`;
+    return el;
+  });
+
+  addSection(data.news || [], (n) => {
+    const el = document.createElement('div');
+    el.className = 'chat-result';
+    el.innerHTML = `
+      <div class="chat-result-head"><span>Live news</span><span>${esc(n.source || 'Web')}</span></div>
+      <p><a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.title)}</a></p>
+      <div class="chat-result-actions">
+        <button type="button" class="btn btn-secondary" data-track-topic="${esc(data.query)}">Track topic</button>
+      </div>`;
+    el.querySelector('[data-track-topic]')?.addEventListener('click', (e) => {
+      addTopicFromChat(e.target.dataset.trackTopic);
+    });
+    return el;
+  });
+
+  return hasResults ? wrap : null;
+}
+
+async function addTopicFromChat(topic) {
+  if (!topic) return;
+  try {
+    const settings = await api('/settings');
+    const topics = settings.search_topics || [];
+    const key = topic.toLowerCase();
+    if (topics.some((t) => t.toLowerCase() === key)) {
+      showToast('Topic already tracked', 'success');
+      return;
+    }
+    topics.push(topic);
+    await api('/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ search_topics: topics }),
+    });
+    showToast(`Added "${topic}" to Topics`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chat-input');
+  const message = input.value.trim();
+  if (!message) return;
+
+  const fetchNews = document.getElementById('chat-live-news').checked;
+  const sendBtn = document.getElementById('chat-send');
+  input.value = '';
+  sendBtn.disabled = true;
+
+  appendChatBubble('user', message);
+  const loadingBubble = appendChatBubble('assistant', 'Searching…', true);
+
+  try {
+    const data = await api('/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, fetch_news: fetchNews }),
+    });
+    loadingBubble.remove();
+    appendChatBubble('assistant', data.reply, false, data);
+  } catch (err) {
+    loadingBubble.textContent = err.message || 'Search failed';
+    loadingBubble.classList.remove('is-loading');
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
 }
 
 // ── Queue ────────────────────────────────────────────────
