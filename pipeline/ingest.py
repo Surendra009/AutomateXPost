@@ -27,6 +27,7 @@ from pipeline.freshness import is_fresh, news_cutoff
 from pipeline.dedup_mode import dedup_at_ingest
 from pipeline.ingest_dedup import load_ingest_dedup_index
 from pipeline.story_key import title_fingerprint
+from pipeline.url_resolve import resolve_article_url
 from pipeline.web_news import fetch_web_news
 
 logger = setup_logging()
@@ -200,11 +201,10 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
                 if not is_fresh(item["published_at"]):
                     skipped += 1
                     continue
-                chash = _content_hash(item["title"], item["url"])
+                url = resolve_article_url(item["url"])
+                chash = _content_hash(item["title"], url)
                 if dedup_at_ingest():
                     dup_reason = dedup_index.is_duplicate(item["title"], chash)
-                elif chash in dedup_index.url_hashes:
-                    dup_reason = "duplicate url"
                 else:
                     dup_reason = None
                 if dup_reason:
@@ -212,7 +212,7 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
                     continue
                 headline = Headline(
                     source=item["source"],
-                    url=item["url"],
+                    url=url,
                     title=item["title"],
                     summary=item["summary"],
                     published_at=item["published_at"],
