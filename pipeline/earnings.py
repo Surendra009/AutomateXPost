@@ -17,19 +17,11 @@ from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline
+from pipeline.watchlist_scope import in_watchlist
 
 logger = setup_logging()
 
 EARNINGS_SOURCE = "Finnhub Earnings"
-
-# When watchlist is empty, track mega-cap / widely followed names
-DEFAULT_EARNINGS_SYMBOLS = {
-    "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "NVDA", "TSLA", "AMD", "INTC",
-    "NFLX", "CRM", "ORCL", "AVGO", "QCOM", "UBER", "ABNB", "SHOP", "SQ", "PYPL",
-    "COIN", "PLTR", "SNOW", "CRWD", "PANW", "ADBE", "IBM", "DIS", "BA", "JPM",
-    "GS", "V", "MA", "WMT", "COST", "HD", "LOW", "TGT", "NKE", "SBUX",
-    "RIVN", "LCID", "F", "GM", "MU", "LRCX", "AMAT", "ASML", "TSM", "ARM",
-}
 
 
 def _hour_label(hour: str | None) -> str:
@@ -88,13 +80,6 @@ def _event_hash(symbol: str, date: str, quarter: int, year: int, kind: str) -> s
 
 def _event_url(symbol: str, date: str) -> str:
     return f"https://finnhub.io/earnings/{symbol.upper()}/{date}"
-
-
-def _in_scope(symbol: str, watchlist: list[str]) -> bool:
-    sym = symbol.upper()
-    if watchlist:
-        return sym in {w.upper() for w in watchlist}
-    return sym in DEFAULT_EARNINGS_SYMBOLS
 
 
 def _has_actual(event: dict[str, Any]) -> bool:
@@ -231,6 +216,9 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
         return 0, 0
 
     watchlist = get_setting("watchlist", [])
+    if not watchlist:
+        return 0, 0
+
     today = datetime.utcnow().date()
     yesterday = today - timedelta(days=1)
     events: list[dict[str, Any]] = []
@@ -253,7 +241,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
     with get_session() as session:
         for event in unique_events:
             symbol = (event.get("symbol") or "").upper()
-            if not _in_scope(symbol, watchlist):
+            if not in_watchlist(symbol, watchlist):
                 continue
 
             date_str = event.get("date") or today.isoformat()

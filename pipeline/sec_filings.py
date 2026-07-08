@@ -14,9 +14,9 @@ from config import MAX_SEC_DRAFTS_PER_CYCLE, SEC_EDGAR_8K_FEED, SEC_USER_AGENT
 from database import get_setting
 from logging_config import setup_logging
 from pipeline.draft_budget import DraftBudget
-from pipeline.earnings import DEFAULT_EARNINGS_SYMBOLS
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from pipeline.structured_common import content_hash, save_structured_draft
+from pipeline.watchlist_scope import in_watchlist
 
 logger = setup_logging()
 
@@ -127,15 +127,6 @@ def _primary_material_item(items: list[tuple[str, str]]) -> tuple[str, str] | No
     return None
 
 
-def _in_scope(symbol: str | None, watchlist: list[str]) -> bool:
-    if not symbol:
-        return False
-    sym = symbol.upper()
-    if watchlist:
-        return sym in {w.upper() for w in watchlist}
-    return sym in DEFAULT_EARNINGS_SYMBOLS
-
-
 def _resolve_ticker(company_name: str, cache: dict[str, str | None]) -> str | None:
     if company_name in cache:
         return cache[company_name]
@@ -185,6 +176,9 @@ def _build_draft(company: str, item_code: str, symbol: str) -> tuple[str, str, s
 def process_sec_filings(budget: DraftBudget | None = None) -> tuple[int, int]:
     """Create drafts from SEC 8-K Item metadata. Returns (ingested, drafts)."""
     watchlist = get_setting("watchlist", [])
+    if not watchlist:
+        return 0, 0
+
     entries = get_sec_8k_entries()
     ticker_cache: dict[str, str | None] = {}
 
@@ -208,7 +202,7 @@ def process_sec_filings(budget: DraftBudget | None = None) -> tuple[int, int]:
 
         item_code, _item_desc = material
         symbol = _resolve_ticker(company, ticker_cache)
-        if not _in_scope(symbol, watchlist):
+        if not in_watchlist(symbol, watchlist):
             continue
 
         chash = content_hash(SEC_SOURCE, entry["accession"] or entry["url"], item_code)

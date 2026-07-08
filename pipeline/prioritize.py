@@ -58,8 +58,7 @@ TICKER_SIGNAL = re.compile(r"\b[A-Z]{1,5}\b|\$[A-Z]{1,5}\b|nasdaq|s&p|dow\b", re
 STOCK_SIGNAL = re.compile(
     r"\b(earnings|revenue|eps|guidance|beat|miss|ipo|merger|acquire|"
     r"layoff|buyback|dividend|forecast|shares|stock|chip|semiconductor|"
-    r"nvidia|nvda|apple|aapl|microsoft|msft|google|meta|amazon|tesla|"
-    r"openai|anthropic|claude|gemini)\b",
+    r"openai|anthropic|claude|gemini)\b|\$[A-Z]{1,5}\b",
     re.I,
 )
 
