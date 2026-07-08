@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from sqlmodel import select
 
-from config import MAX_NEWS_AGE_HOURS
+from pipeline.cycle_context import get_max_news_age_hours
 from database import get_session
 from logging_config import setup_logging
 from models import Headline
@@ -13,7 +13,7 @@ logger = setup_logging()
 
 
 def news_cutoff() -> datetime:
-    return datetime.utcnow() - timedelta(hours=MAX_NEWS_AGE_HOURS)
+    return datetime.utcnow() - timedelta(hours=get_max_news_age_hours())
 
 
 def is_fresh(published_at: datetime) -> bool:
@@ -48,6 +48,6 @@ def discard_stale_headlines() -> int:
             logger.info(
                 "Discarded %d headlines older than %dh",
                 len(stale),
-                MAX_NEWS_AGE_HOURS,
+                get_max_news_age_hours(),
             )
         return len(stale)
