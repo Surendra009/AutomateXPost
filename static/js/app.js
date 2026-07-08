@@ -123,6 +123,16 @@ function initChatScreen() {
   if (chatBootstrapped) return;
   chatBootstrapped = true;
 
+  api('/settings').then((data) => {
+    const chat = data.chat || {};
+    const note = document.getElementById('chat-model-note');
+    if (note && chat.provider && chat.provider !== 'none') {
+      note.textContent = `Powered by ${chat.provider} · ${chat.model}`;
+    } else if (note) {
+      note.textContent = 'No LLM configured — results still work; add ANTHROPIC_API_KEY or OPENAI_API_KEY for summaries.';
+    }
+  }).catch(() => {});
+
   document.getElementById('chat-send').addEventListener('click', () => sendChatMessage());
   document.getElementById('chat-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -675,6 +685,8 @@ async function loadSettings() {
     const items = [
       { label: 'Dry run', on: cfg.dry_run },
       { label: 'Anthropic', on: cfg.anthropic_configured },
+      { label: 'OpenAI', on: cfg.openai_configured },
+      { label: 'Chat LLM', on: (data.chat?.provider || 'none') !== 'none' },
       { label: 'X API', on: cfg.x_configured },
       { label: 'Finnhub', on: cfg.finnhub_configured },
     ];

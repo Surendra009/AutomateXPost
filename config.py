@@ -12,6 +12,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = os.getenv("APP_PASSWORD", "changeme")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 FINNHUB_ENV_NAMES = ("FINNHUB_KEY", "FINNHUB_API_KEY", "FINHUB_KEY")
 
@@ -36,6 +37,13 @@ LOG_FILE = BASE_DIR / "postpilot.log"
 
 FILTER_MODEL = "claude-haiku-4-5"
 DRAFT_MODEL = "claude-sonnet-4-6"
+# Chat assistant: Haiku is best on Anthropic (fast/cheap). Alternatives if no Claude:
+#   CHAT_PROVIDER=openai  CHAT_MODEL=gpt-4o-mini  (recommended non-Claude option)
+#   CHAT_PROVIDER=openai  CHAT_MODEL=gpt-4.1-nano  (cheaper, still capable)
+CHAT_PROVIDER = os.getenv("CHAT_PROVIDER", "auto")  # auto | anthropic | openai
+CHAT_MODEL = os.getenv("CHAT_MODEL", "").strip()
+CHAT_ANTHROPIC_MODEL = os.getenv("CHAT_ANTHROPIC_MODEL", FILTER_MODEL)
+CHAT_OPENAI_MODEL = os.getenv("CHAT_OPENAI_MODEL", "gpt-4o-mini")
 PIPELINE_INTERVAL_SECONDS = 300  # 5 min
 PIPELINE_TIMEZONE = os.getenv("PIPELINE_TIMEZONE", "America/New_York")
 OVERNIGHT_QUIET_START_HOUR = int(os.getenv("OVERNIGHT_QUIET_START_HOUR", "22"))  # 10 PM local
@@ -142,6 +150,7 @@ DEFAULT_SETTINGS = {
 def get_settings():
     return {
         "anthropic_configured": bool(ANTHROPIC_API_KEY),
+        "openai_configured": bool(OPENAI_API_KEY),
         "x_configured": all([X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]),
         "finnhub_configured": bool(get_finnhub_key()),
         "dry_run": DRY_RUN,

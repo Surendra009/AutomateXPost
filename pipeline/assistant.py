@@ -8,12 +8,12 @@ from typing import Any
 
 from sqlmodel import col, or_, select
 
-from config import ANTHROPIC_API_KEY, FILTER_MODEL, MAX_WEB_RESULTS_PER_QUERY
+from config import MAX_WEB_RESULTS_PER_QUERY
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline, Post
-from pipeline.filter import _call_claude
 from pipeline.freshness import format_age
+from pipeline.llm import call_chat_llm
 from pipeline.noise import is_title_noise
 from pipeline.url_resolve import resolve_article_url
 from pipeline.web_search import search_google_news
@@ -21,45 +21,61 @@ from pipeline.web_search import search_google_news
 logger = setup_logging()
 
 _CHAT_PREFIXES = (
-    r"^(?:find|search|show me|look for|get|list|any)\s+",
+    r"^(?:find|search|show me|look for|get|list|any|what(?:'s| is)?)\s+",
     r"^(?:drafts?|posts?)\s+(?:about|on|for|mentioning)\s+",
     r"^(?:news|headlines?|stories)\s+(?:about|on|for)\s+",
     r"^topic\s+",
+    r"^(?:tell me about|latest on)\s+",
 )
 
 
-def _extract_terms(message: str) -> list[str]:
+def _extract_query(message: str) -> tuple[str, list[str]]:
+    """Return full phrase and optional word tokens for search."""
     text = message.strip()
     for pattern in _CHAT_PREFIXES:
         text = re.sub(pattern, "", text, flags=re.I).strip()
     text = text.strip("?.!")
     if not text:
-        return []
+        return "", []
+
+    # Keep full phrase for Google News and phrase DB match
+    phrase = text
     terms = [t for t in re.split(r"\s+", text) if len(t) >= 2]
-    return terms or [message.strip()]
+    # Single ticker-like token (e.g. NVDA)
+    if not terms and re.fullmatch(r"\$?[A-Za-z]{1,5}", text):
+        terms = [text.upper().lstrip("$")]
+    return phrase, terms
 
 
-def _term_clauses(column, terms: list[str]):
-    return [col(column).ilike(f"%{term}%") for term in terms]
-
-
-def search_drafts(terms: list[str], *, limit: int = 12) -> list[dict[str, Any]]:
-    if not terms:
-        return []
-
-    draft_filters = []
+def _text_clauses(columns: list, phrase: str, terms: list[str]) -> list:
+    clauses = []
+    if phrase:
+        pattern = f"%{phrase}%"
+        for column in columns:
+            clauses.append(col(column).ilike(pattern))
     for term in terms:
-        draft_filters.extend([
-            col(Draft.text).ilike(f"%{term}%"),
-            col(Draft.tickers).ilike(f"%{term}%"),
-            col(Draft.category).ilike(f"%{term}%"),
-        ])
+        if term.lower() == phrase.lower():
+            continue
+        pattern = f"%{term}%"
+        for column in columns:
+            clauses.append(col(column).ilike(pattern))
+    return clauses
+
+
+def search_drafts(phrase: str, terms: list[str], *, limit: int = 12) -> list[dict[str, Any]]:
+    clauses = _text_clauses(
+        [Draft.text, Draft.tickers, Draft.category],
+        phrase,
+        terms,
+    )
+    if not clauses:
+        return []
 
     with get_session() as session:
         rows = session.exec(
             select(Draft, Headline)
             .join(Headline, Draft.headline_id == Headline.id)
-            .where(or_(*draft_filters))
+            .where(or_(*clauses))
             .order_by(Draft.created_at.desc())
             .limit(limit)
         ).all()
@@ -67,22 +83,19 @@ def search_drafts(terms: list[str], *, limit: int = 12) -> list[dict[str, Any]]:
         return [_draft_hit(draft, headline) for draft, headline in rows]
 
 
-def search_headlines(terms: list[str], *, limit: int = 10) -> list[dict[str, Any]]:
-    if not terms:
+def search_headlines(phrase: str, terms: list[str], *, limit: int = 10) -> list[dict[str, Any]]:
+    clauses = _text_clauses(
+        [Headline.title, Headline.summary, Headline.source],
+        phrase,
+        terms,
+    )
+    if not clauses:
         return []
-
-    filters = []
-    for term in terms:
-        filters.extend([
-            col(Headline.title).ilike(f"%{term}%"),
-            col(Headline.summary).ilike(f"%{term}%"),
-            col(Headline.source).ilike(f"%{term}%"),
-        ])
 
     with get_session() as session:
         rows = session.exec(
             select(Headline)
-            .where(or_(*filters))
+            .where(or_(*clauses))
             .order_by(Headline.published_at.desc())
             .limit(limit)
         ).all()
@@ -90,23 +103,17 @@ def search_headlines(terms: list[str], *, limit: int = 10) -> list[dict[str, Any
         return [_headline_hit(row) for row in rows]
 
 
-def search_posted(terms: list[str], *, limit: int = 8) -> list[dict[str, Any]]:
-    if not terms:
+def search_posted(phrase: str, terms: list[str], *, limit: int = 8) -> list[dict[str, Any]]:
+    clauses = _text_clauses([Draft.text, Draft.tickers], phrase, terms)
+    if not clauses:
         return []
-
-    filters = []
-    for term in terms:
-        filters.extend([
-            col(Draft.text).ilike(f"%{term}%"),
-            col(Draft.tickers).ilike(f"%{term}%"),
-        ])
 
     with get_session() as session:
         rows = session.exec(
             select(Draft, Post, Headline)
             .join(Post, Post.draft_id == Draft.id)
             .join(Headline, Draft.headline_id == Headline.id)
-            .where(Draft.status == "posted", or_(*filters))
+            .where(Draft.status == "posted", or_(*clauses))
             .order_by(Post.posted_at.desc())
             .limit(limit)
         ).all()
@@ -121,29 +128,43 @@ def search_posted(terms: list[str], *, limit: int = 8) -> list[dict[str, Any]]:
 
 
 def fetch_topic_news(query: str, *, limit: int | None = None) -> list[dict[str, Any]]:
+    """Search Google News for any topic — tries several query shapes."""
     limit = limit or min(MAX_WEB_RESULTS_PER_QUERY, 8)
-    search_q = query if "news" in query.lower() else f'"{query}" news'
-    raw = search_google_news(search_q, source_label="Chat Search", limit=limit)
+    query = query.strip()
+    if not query:
+        return []
+
+    candidates = [query, f'"{query}"']
+    if "news" not in query.lower():
+        candidates.append(f"{query} news")
+
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    for item in raw:
-        title = (item.get("title") or "").strip()
-        if not title or is_title_noise(title):
-            continue
-        url = resolve_article_url(item.get("url") or "")
-        if not url or url in seen:
-            continue
-        seen.add(url)
-        items.append({
-            "title": title,
-            "url": url,
-            "source": item.get("source") or "Chat Search",
-            "summary": (item.get("summary") or "")[:240],
-            "published_at": item.get("published_at").isoformat()
-            if item.get("published_at")
-            else None,
-        })
+    for search_q in candidates:
+        if len(items) >= limit:
+            break
+        raw = search_google_news(search_q, source_label="Chat Search", limit=limit)
+        for item in raw:
+            title = (item.get("title") or "").strip()
+            if not title or is_title_noise(title):
+                continue
+            url = resolve_article_url(item.get("url") or "")
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            items.append({
+                "title": title,
+                "url": url,
+                "source": item.get("source") or "Chat Search",
+                "summary": (item.get("summary") or "")[:240],
+                "published_at": item.get("published_at").isoformat()
+                if item.get("published_at")
+                else None,
+            })
+            if len(items) >= limit:
+                break
+
     return items
 
 
@@ -192,8 +213,8 @@ def _fallback_reply(
     total = len(drafts) + len(headlines) + len(posted) + len(news)
     if total == 0:
         return (
-            f'No matches for "{query}". Try a ticker ($NVDA), company name, or topic. '
-            "Enable Live news to search Google News."
+            f'Nothing in your library for "{query}". '
+            "Live news was searched — try a shorter phrase or different wording."
         )
 
     parts: list[str] = []
@@ -223,33 +244,31 @@ def _llm_reply(
     posted: list[dict],
     news: list[dict],
 ) -> str | None:
-    if not ANTHROPIC_API_KEY:
-        return None
-
     context = {
         "user_message": message,
         "search_query": query,
         "drafts": drafts[:6],
         "posted": posted[:4],
         "headlines": headlines[:4],
-        "news": news[:4],
+        "news": news[:6],
     }
     system = (
-        "You are PostPilot's search assistant. Summarize search results in 2-4 short sentences. "
-        "Be direct and helpful. Mention counts and highlight the most relevant match. "
-        "If nothing found, suggest trying a ticker or enabling live news. Plain text only."
+        "You are PostPilot's search assistant for stock, tech, and general news topics. "
+        "Summarize search results in 2-4 short sentences. Be direct and helpful. "
+        "Mention counts and highlight the most relevant match. "
+        "If only live news returned, say that and note the top headline. Plain text only."
     )
     user = f"Results JSON:\n{json.dumps(context, default=str)[:6000]}"
-    raw = _call_claude(system, user, FILTER_MODEL, max_tokens=300)
+    raw = call_chat_llm(system, user, max_tokens=300)
     return raw.strip() if raw else None
 
 
-def chat_search(message: str, *, fetch_news: bool = False) -> dict[str, Any]:
-    """Search drafts, headlines, and optionally live news for a natural-language query."""
+def chat_search(message: str, *, fetch_news: bool = True) -> dict[str, Any]:
+    """Search drafts, headlines, and live news for any topic or keyword."""
     message = message.strip()
     if not message:
         return {
-            "reply": "Ask about a ticker, company, topic, or draft text.",
+            "reply": "Ask about any topic, ticker, company, or draft text.",
             "query": "",
             "drafts": [],
             "headlines": [],
@@ -257,21 +276,22 @@ def chat_search(message: str, *, fetch_news: bool = False) -> dict[str, Any]:
             "news": [],
         }
 
-    terms = _extract_terms(message)
-    query = " ".join(terms)
+    phrase, terms = _extract_query(message)
+    query = phrase or message.strip()
 
-    drafts = search_drafts(terms)
-    posted = search_posted(terms)
+    drafts = search_drafts(phrase, terms)
+    posted = search_posted(phrase, terms)
     posted_ids = {p["id"] for p in posted}
     drafts = [d for d in drafts if d["id"] not in posted_ids and d["status"] != "posted"]
-    headlines = search_headlines(terms)
+    headlines = search_headlines(phrase, terms)
     draft_headline_ids = {
         d["headline"]["id"] for d in drafts if d.get("headline") and d["headline"].get("id")
     }
     headlines = [h for h in headlines if h["id"] not in draft_headline_ids]
 
+    local_count = len(drafts) + len(headlines) + len(posted)
     news: list[dict[str, Any]] = []
-    if fetch_news:
+    if fetch_news or local_count == 0:
         news = fetch_topic_news(query)
 
     reply = _llm_reply(message, query, drafts=drafts, headlines=headlines, posted=posted, news=news)

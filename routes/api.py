@@ -20,6 +20,7 @@ from logging_config import setup_logging
 from models import Draft, Headline, Post
 from pipeline.analytics import analytics_summary, refresh_post_metrics
 from pipeline.assistant import chat_search
+from pipeline.llm import chat_llm_status
 from pipeline.draft import regenerate_draft
 from pipeline.feedback import record_rejection
 from pipeline.freshness import discard_stale_headlines, format_age, age_minutes, is_fresh
@@ -56,7 +57,7 @@ class PushSubscribeRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    fetch_news: bool = False
+    fetch_news: bool = True
 
 
 class SettingsPatch(BaseModel):
@@ -136,6 +137,12 @@ def post_chat(request: Request, body: ChatRequest):
     if len(message) > 500:
         raise HTTPException(status_code=400, detail="message too long (max 500)")
     return chat_search(message, fetch_news=body.fetch_news)
+
+
+@router.get("/chat/status")
+def get_chat_status(request: Request):
+    require_auth(request)
+    return chat_llm_status()
 
 
 @router.get("/queue")
@@ -328,6 +335,7 @@ def get_settings_route(request: Request):
         "configured": push_configured(),
         "public_key": get_vapid_public_key() if push_configured() else None,
     }
+    settings["chat"] = chat_llm_status()
     return settings
 
 

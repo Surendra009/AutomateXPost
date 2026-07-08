@@ -923,6 +923,12 @@ body {
   font-size: 20px;
 }
 
+.chat-model-note {
+  margin: 0 0 14px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
 .chat-welcome p {
   margin: 0 0 14px;
   color: var(--dim);
