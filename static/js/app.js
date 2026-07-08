@@ -5,7 +5,7 @@ let currentTab = 'queue';
 let refreshTimer = null;
 const DEDUP_MODE_DESC = {
   pipeline: 'Block duplicate stories before drafting (saves API cost).',
-  queue: 'Draft duplicates allowed, but only the best draft per story shows in queue.',
+  queue: 'Block duplicate drafts and show only the best per story in queue.',
   off: 'No deduplication — duplicate stories may appear.',
 };
 

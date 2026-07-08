@@ -9,7 +9,7 @@ from config import DRAFT_DEDUP_HOURS, INGEST_TITLE_FUZZY_THRESHOLD
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
-from pipeline.dedup_mode import dedup_at_pipeline
+from pipeline.dedup_mode import dedup_before_draft
 from pipeline.story_key import normalize_title, story_fingerprint, title_fingerprint
 
 logger = setup_logging()
@@ -19,7 +19,7 @@ _DEDUP_STATUSES = ("pending", "posted", "approved", "rejected", "stale")
 
 def was_recently_drafted(title: str, source: str, hours: int | None = None) -> bool:
     """True if this story (including cross-source matches) got a draft recently."""
-    if not dedup_at_pipeline():
+    if not dedup_before_draft():
         return False
     hours = hours if hours is not None else DRAFT_DEDUP_HOURS
     source_fp = story_fingerprint(title, source)
@@ -38,7 +38,8 @@ def was_recently_drafted(title: str, source: str, hours: int | None = None) -> b
         for _draft, headline in rows:
             if story_fingerprint(headline.title, headline.source) == source_fp:
                 return True
-            if headline.title_fp and headline.title_fp == cross_fp:
+            headline_fp = headline.title_fp or title_fingerprint(headline.title)
+            if headline_fp == cross_fp:
                 return True
             if norm:
                 other = normalize_title(headline.title)
