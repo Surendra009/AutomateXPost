@@ -88,20 +88,28 @@ def _build_draft(
 
     if bm and EARNINGS_CONTEXT.search(text):
         verb = _beat_miss_word(bm)
+        article = ""
         facts = extract_earnings_facts(text)
-        lines = build_earnings_lines(symbol, verb, facts)
-        if not lines and url:
-            article = fetch_article_text(url)
+        if url:
+            article = fetch_article_text(url) or ""
             if article:
-                facts = extract_earnings_facts(f"{text} {article[:2500]}")
-                lines = build_earnings_lines(symbol, verb, facts)
+                facts = extract_earnings_facts(f"{text} {article[:3000]}")
+        lines = build_earnings_lines(
+            symbol,
+            verb,
+            facts,
+            source_text=text,
+            article_text=article,
+        )
         if not lines:
             return None
-        line1, line2 = lines
+        line1, line2, line3 = lines
         impact = "high" if verb in ("beat", "missed") else "med"
         fmt = "BREAKING"
         confidence = 0.9
         category = "earnings"
+        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
+        return draft, category, impact, fmt, confidence, line1
     elif GUIDANCE.search(text):
         line1 = f"{symbol} updated guidance"
         line2 = "Forward outlook reset for the stock"
