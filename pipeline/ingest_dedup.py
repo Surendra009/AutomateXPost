@@ -5,13 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from rapidfuzz import fuzz
 from sqlmodel import select
 
 from config import INGEST_DEDUP_HOURS, INGEST_TITLE_FUZZY_THRESHOLD
 from database import get_session
 from models import Headline
-from pipeline.story_key import normalize_title, title_fingerprint
+from pipeline.story_key import normalize_title, title_fingerprint, titles_similar
 
 
 @dataclass
@@ -39,7 +38,7 @@ class IngestDedupIndex:
         norm = normalize_title(title)
         if norm:
             for existing in self.normalized_titles:
-                if fuzz.ratio(norm, existing) >= fuzzy_threshold:
+                if titles_similar(norm, existing, threshold=fuzzy_threshold):
                     return "cross-source fuzzy title"
 
         return None

@@ -9,7 +9,7 @@ from sqlmodel import select
 
 from database import get_session
 from models import Draft, Headline
-from pipeline.dedup import story_has_active_draft, title_recently_ingested, was_recently_drafted
+from pipeline.dedup import mark_story_drafted, should_skip_story
 from pipeline.draft_budget import DraftBudget
 from pipeline.story_key import title_fingerprint
 
@@ -49,9 +49,7 @@ def save_structured_draft(
     """Insert headline + pending draft. Returns True if created."""
     if budget is not None and budget.remaining <= 0:
         return False
-    if was_recently_drafted(title, source):
-        return False
-    if story_has_active_draft(title) or title_recently_ingested(title):
+    if should_skip_story(title, source):
         return False
     if headline_exists(chash) or headline_exists_by_title(title):
         return False
@@ -87,4 +85,5 @@ def save_structured_draft(
 
     if budget is not None:
         budget.try_take(1)
+    mark_story_drafted(title)
     return True

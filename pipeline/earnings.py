@@ -10,7 +10,7 @@ import httpx
 from sqlmodel import select
 
 from config import MAX_EARNINGS_DRAFTS_PER_CYCLE
-from pipeline.dedup import was_recently_drafted
+from pipeline.dedup import mark_story_drafted, should_skip_story
 from pipeline.draft_budget import DraftBudget
 from pipeline.story_key import title_fingerprint
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key
@@ -268,7 +268,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                 chash = _event_hash(symbol, date_str, quarter, year, kind)
                 if _headline_exists(chash):
                     continue
-                if was_recently_drafted(title, EARNINGS_SOURCE):
+                if should_skip_story(title, EARNINGS_SOURCE):
                     continue
 
                 headline = Headline(
@@ -296,6 +296,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                     created_at=now,
                 )
                 session.add(draft)
+                mark_story_drafted(title)
                 ingested += 1
                 drafts_created += 1
                 if budget:
@@ -314,7 +315,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
             chash = _event_hash(symbol, date_str, quarter, year, kind)
             if _headline_exists(chash) or _pending_draft_for_hash(chash):
                 continue
-            if was_recently_drafted(title, EARNINGS_SOURCE):
+            if should_skip_story(title, EARNINGS_SOURCE):
                 continue
 
             headline = Headline(
@@ -342,6 +343,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                 created_at=now,
             )
             session.add(draft)
+            mark_story_drafted(title)
             ingested += 1
             drafts_created += 1
             if budget:

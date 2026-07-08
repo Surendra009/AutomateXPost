@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from rapidfuzz import fuzz
 from sqlmodel import select
 
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
-from pipeline.story_key import normalize_title, title_fingerprint
+from pipeline.story_key import normalize_title, title_fingerprint, titles_similar
 
 logger = setup_logging()
 
-_QUEUE_FUZZY_THRESHOLD = 85
+_QUEUE_FUZZY_THRESHOLD = 70
 
 
 def _story_key(headline: Headline) -> str:
@@ -49,13 +48,13 @@ def _merge_fuzzy_groups(
         if key_a in used:
             continue
         combined = list(groups[key_a])
-        rep_title = normalize_title(groups[key_a][0][1].title)
+        rep_title = groups[key_a][0][1].title
 
         for key_b in keys:
             if key_b == key_a or key_b in used:
                 continue
-            other_title = normalize_title(groups[key_b][0][1].title)
-            if fuzz.ratio(rep_title, other_title) >= _QUEUE_FUZZY_THRESHOLD:
+            other_title = groups[key_b][0][1].title
+            if titles_similar(rep_title, other_title, threshold=_QUEUE_FUZZY_THRESHOLD):
                 combined.extend(groups[key_b])
                 used.add(key_b)
 
@@ -113,3 +112,17 @@ def dedupe_pending_drafts(
 
     visible.sort(key=lambda x: x[0].created_at, reverse=True)
     return visible, hidden
+
+
+def dedupe_pending_in_db() -> int:
+    """Proactively collapse duplicate pending drafts (e.g. end of pipeline cycle)."""
+    with get_session() as session:
+        drafts = list(session.exec(select(Draft).where(Draft.status == "pending")).all())
+        if not drafts:
+            return 0
+        headline_ids = [d.headline_id for d in drafts]
+        rows = session.exec(select(Headline).where(Headline.id.in_(headline_ids))).all()
+        headlines = {h.id: h for h in rows if h.id is not None}
+
+    _visible, hidden = dedupe_pending_drafts(drafts, headlines)
+    return hidden
