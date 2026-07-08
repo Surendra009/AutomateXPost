@@ -132,6 +132,10 @@ def _save_cycle_stats(
 
 async def run_pipeline_cycle(*, force: bool = False) -> dict:
     """Single pipeline cycle: expire → ingest → structured drafts → filter → LLM draft."""
+    return await asyncio.to_thread(_run_pipeline_cycle, force=force)
+
+
+def _run_pipeline_cycle(*, force: bool = False) -> dict:
     global _pipeline_running
 
     if _pipeline_running:
