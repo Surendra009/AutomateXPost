@@ -11,7 +11,7 @@ from sqlmodel import select
 from config import REJECTION_FUZZY_THRESHOLD, REJECTION_LEARN_THRESHOLD
 from database import get_session
 from logging_config import setup_logging
-from models import Draft, Headline, RejectionFeedback
+from models import Draft, Headline, RejectionFeedback, RejectionNote
 
 logger = setup_logging()
 
@@ -66,8 +66,8 @@ def _compiled_learned_patterns(rows: list[RejectionFeedback]) -> list[re.Pattern
     return patterns
 
 
-def record_rejection(draft_id: int) -> None:
-    """Increment learned-noise stats when the user rejects a draft."""
+def record_rejection(draft_id: int, reason: str = "other", note: str = "") -> None:
+    """Increment learned-noise stats and store rejection reason for drafter hints."""
     with get_session() as session:
         draft = session.get(Draft, draft_id)
         if not draft:
@@ -75,6 +75,15 @@ def record_rejection(draft_id: int) -> None:
         headline = session.get(Headline, draft.headline_id)
         if not headline:
             return
+
+        session.add(
+            RejectionNote(
+                draft_id=draft_id,
+                reason=reason or "other",
+                note=(note or "")[:500],
+                draft_text_sample=draft.text[:280],
+            )
+        )
 
         norm = normalize_title(headline.title)
         if not norm:
@@ -145,6 +154,41 @@ def is_learned_noise(title: str) -> str | None:
                 return f"learned rejection pattern: {pattern.pattern}"
 
     return None
+
+
+_REASON_HINTS = {
+    "too_vague": "User rejected vague posts — be specific with company + action + number.",
+    "wrong_ticker": "User rejected wrong ticker — verify tickers match the headline subject.",
+    "bad_hook": "User rejected weak hooks — line 1 must be scroll-stopping, not generic.",
+    "too_long": "User rejected long posts — tighten lines, max 2 numbers.",
+    "off_topic": "User rejected off-topic angle — stay on the headline story only.",
+    "listicle": "User rejected listicle/roundup tone — never write stock-pick listicles.",
+    "other": "User rejected similar posts — improve specificity and hook.",
+}
+
+
+def drafter_feedback_hints(limit: int = 8) -> str:
+    """Recent rejection reasons for the Sonnet drafter prompt."""
+    with get_session() as session:
+        notes = session.exec(
+            select(RejectionNote).order_by(RejectionNote.created_at.desc()).limit(limit)
+        ).all()
+
+    if not notes:
+        return ""
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for note in notes:
+        key = note.reason
+        if key in seen:
+            continue
+        seen.add(key)
+        hint = _REASON_HINTS.get(key, _REASON_HINTS["other"])
+        lines.append(f"- {hint}")
+        if note.note:
+            lines.append(f"  Example note: {note.note[:120]}")
+    return "\n".join(lines)
 
 
 def feedback_stats() -> dict:

@@ -86,4 +86,7 @@ def is_obvious_noise(headline: Headline) -> str | None:
     if headline.source.startswith("Finnhub") and not TRADE_SIGNALS.search(text):
         return "no trade signal"
 
+    if headline.source.startswith("Web Search") and not TRADE_SIGNALS.search(text):
+        return "no trade signal"
+
     return None

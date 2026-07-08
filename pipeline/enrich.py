@@ -7,6 +7,7 @@ import httpx
 from config import ARTICLE_FETCH_CATEGORIES, MIN_SUMMARY_CHARS_FOR_SKIP_FETCH
 from logging_config import setup_logging
 from models import Headline
+from pipeline.url_resolve import resolve_article_url
 
 logger = setup_logging()
 
@@ -50,6 +51,7 @@ def get_article_text_for_draft(headline: Headline, classification: dict) -> str:
 
 def fetch_article_text(url: str) -> str:
     """Return extracted article body text, or empty string on failure."""
+    url = resolve_article_url(url)
     if not url or not url.startswith("http"):
         return ""
 

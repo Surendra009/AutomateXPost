@@ -371,6 +371,98 @@ body {
   font-weight: 700;
 }
 
+.story-age {
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+.story-age.is-stale-story {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.story-age.is-aging-story {
+  color: var(--amber);
+}
+
+.post-error {
+  margin: 8px 16px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: var(--red);
+  font-size: 12px;
+}
+
+.scheduled-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--blue);
+  margin-left: 6px;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 100;
+  padding: var(--pad);
+  padding-bottom: calc(var(--pad) + var(--safe-b));
+}
+
+.modal.hidden { display: none !important; }
+
+.modal-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--card);
+  border-radius: var(--r-lg);
+  padding: 20px;
+  border: 1px solid var(--line);
+}
+
+.modal-card h3 {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+.reason-grid {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.reason-btn {
+  text-align: left;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--inset);
+  font-size: 14px;
+}
+
+.schedule-quick {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.engagement-pill {
+  font-size: 11px;
+  color: var(--dim);
+  margin-left: 8px;
+}
+
+.post-actions-row.three-col {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
 .post-body {
   padding: 20px 16px;
   background: var(--inset);

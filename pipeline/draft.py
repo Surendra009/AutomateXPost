@@ -5,13 +5,15 @@ import re
 from datetime import datetime
 
 from config import DRAFT_MODEL, MAX_DRAFTS_PER_CYCLE
-from database import get_session
+from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline
 from pipeline.ai_news import infer_ai_tickers
 from pipeline.draft_budget import DraftBudget
 from pipeline.dedup import was_recently_drafted
+from pipeline.classify_cache import get_cached_classification
 from pipeline.enrich import get_article_text_for_draft
+from pipeline.feedback import drafter_feedback_hints
 from pipeline.filter import _call_claude, _parse_json_array
 from pipeline.freshness import is_fresh
 from pipeline.templates import try_template_draft
@@ -47,12 +49,19 @@ Why it matters — useful takeaway for investors/builders
 $TICKER
 ```
 
+## Hook rules (critical for engagement)
+- Line 1 must stop the scroll: company + concrete action OR one surprise number
+- Never open with "Investors", "Markets", "Traders", or "Wall Street"
+- Prefer active verbs: launched, beat, cut, acquired, filed, raised
+
 ## Rules
 - Be specific: company, product, or one key number
 - Line 2 = the "so what" — competitive angle, stock impact, or user impact
 - Sentence case. Never ALL CAPS except $TICKERS
 - Max 2 numbers in the whole post
-- No emojis, no hashtags
+- No emojis
+- Optional: one topic hashtag on macro/earnings days only if allow_hashtags is true (#CPI, #NVDAearnings)
+- Otherwise no hashtags — cashtags on the last line only
 - Each line under ~70 characters
 - Tickers on the last line (use tickers array too)
 - Don't copy the headline verbatim
@@ -69,13 +78,17 @@ $GOOGL $AMZN
 def _build_draft_prompt(headline: Headline, classification: dict, article_text: str) -> str:
     tickers = classification.get("tickers") or []
     ticker_str = ", ".join(tickers) if tickers else "infer from story"
+    hints = drafter_feedback_hints()
     parts = [
         f"Headline (don't copy): {headline.title}",
         f"Source: {headline.source}",
         f"Category: {classification.get('category', 'other')}",
         f"Impact: {classification.get('impact', 'med')}",
         f"Suggested tickers: {ticker_str}",
+        f"allow_hashtags: {get_setting('allow_hashtags', False)}",
     ]
+    if hints:
+        parts.append(f"User rejection feedback (avoid these mistakes):\n{hints}")
     if headline.summary:
         parts.append(f"Summary: {headline.summary[:500]}")
     if classification.get("angle"):
@@ -331,3 +344,50 @@ def _is_headline_echo(text: str, title: str) -> bool:
     flat = " ".join(text.lower().split())[:120]
     normalized_title = " ".join(title.lower().split())
     return fuzz.ratio(flat, normalized_title) > 75
+
+
+def regenerate_draft(draft_id: int) -> Draft | None:
+    """Rewrite a pending draft with a fresh LLM pass (same headline)."""
+    with get_session() as session:
+        draft = session.get(Draft, draft_id)
+        if not draft or draft.status not in ("pending", "scheduled"):
+            return None
+        headline = session.get(Headline, draft.headline_id)
+        if not headline:
+            return None
+
+    classification = get_cached_classification(headline.title, headline.source) or {
+        "category": draft.category,
+        "impact": draft.impact,
+        "tickers": draft.tickers.split(",") if draft.tickers else [],
+        "relevant": True,
+    }
+    article_text = get_article_text_for_draft(headline, classification)
+    prompt = _build_draft_prompt(headline, classification, article_text)
+    raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=600)
+    if not raw:
+        return None
+
+    draft_data = _parse_draft_response(raw)
+    if not draft_data or draft_data.get("skip"):
+        return None
+
+    tickers = _resolve_tickers(draft_data, classification, headline)
+    fmt = draft_data.get("format", draft.format)
+    text = _normalize_post(draft_data.get("text", "").strip(), tickers)
+    if not text or not _passes_style_check(text, fmt):
+        return None
+
+    with get_session() as session:
+        row = session.get(Draft, draft_id)
+        if not row:
+            return None
+        row.text = text
+        row.format = fmt
+        row.tickers = ",".join(tickers) if tickers else row.tickers
+        row.confidence = float(draft_data.get("confidence", row.confidence))
+        row.post_error = None
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return row
