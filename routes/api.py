@@ -27,7 +27,7 @@ from pipeline.draft import regenerate_draft
 from pipeline.feedback import record_rejection
 from pipeline.freshness import discard_stale_headlines, format_age, age_minutes, is_fresh
 from pipeline.finnhub_api import test_finnhub_connection
-from pipeline.post import PostingError, publish_draft
+from pipeline.post import PostingError, get_today_stats, publish_draft
 from pipeline.push import get_vapid_public_key, push_configured, remove_subscription, save_subscription
 from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
 from pipeline.dedup_mode import DEDUP_MODE_LABELS, get_dedup_mode
@@ -324,14 +324,15 @@ def get_history(request: Request):
 
         posted = []
         for draft, post in posted_drafts:
+            tweet_id = post.tweet_id or ""
             posted.append({
                 "id": draft.id,
                 "text": draft.text,
-                "posted_at": post.posted_at.isoformat(),
-                "tweet_id": post.tweet_id,
-                "tweet_url": f"https://x.com/i/status/{post.tweet_id}" if not post.tweet_id.startswith("dry_run") else None,
-                "likes": post.like_count,
-                "retweets": post.retweet_count,
+                "posted_at": post.posted_at.isoformat() if post.posted_at else None,
+                "tweet_id": tweet_id,
+                "tweet_url": f"https://x.com/i/status/{tweet_id}" if tweet_id and not tweet_id.startswith("dry_run") else None,
+                "likes": post.like_count or 0,
+                "retweets": post.retweet_count or 0,
                 "thread_count": len(post.thread_tweet_ids.split(",")) if post.thread_tweet_ids else 1,
             })
 
