@@ -12,6 +12,7 @@ from logging_config import setup_logging
 from pipeline.draft_budget import DraftBudget
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key, parse_finnhub_timestamp
 from pipeline.freshness import is_fresh
+from pipeline.market_universe import scan_universe
 from pipeline.noise import is_title_noise
 from pipeline.structured_common import content_hash, save_structured_draft
 from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts
@@ -129,7 +130,10 @@ def process_company_news(budget: DraftBudget | None = None) -> tuple[int, int]:
         return 0, 0
 
     watchlist = get_setting("watchlist", [])
-    symbols = normalized_watchlist(watchlist)[:15]
+    symbols = normalized_watchlist(watchlist)
+    if not symbols:
+        symbols = scan_universe(max_symbols=15)
+    symbols = symbols[:15]
     if not symbols:
         return 0, 0
 

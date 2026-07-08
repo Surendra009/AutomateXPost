@@ -13,10 +13,10 @@ from config import (
 )
 from database import get_setting
 from logging_config import setup_logging
+from pipeline.market_universe import scan_universe
 from pipeline.noise import is_title_noise
 from pipeline.story_key import title_fingerprint
 from pipeline.url_resolve import resolve_article_url
-from pipeline.watchlist_scope import normalized_watchlist
 from pipeline.web_search import search_google_news
 
 logger = setup_logging()
@@ -26,9 +26,14 @@ SOURCE_MERGER = "Web Search · mergers"
 SOURCE_COMPANY = "Web Search · company"
 SOURCE_CALENDAR = "Web Search · calendar"
 SOURCE_TOPIC = "Web Search · topic"
+SOURCE_MOVERS = "Web Search · movers"
+SOURCE_ATH = "Web Search · ATH"
 
 _TICKER_QUERIES: list[tuple[str, str]] = [
     ('"{symbol}" earnings EPS revenue beat miss report', SOURCE_EARNINGS),
+    ('"{symbol}" earnings results after hours', SOURCE_EARNINGS),
+    ('"{symbol}" stock price surge plunge percent move', SOURCE_MOVERS),
+    ('"{symbol}" all time high record high stock', SOURCE_ATH),
     ('"{symbol}" merger acquisition buyout takeover deal', SOURCE_MERGER),
     ('"{symbol}" stock company news', SOURCE_COMPANY),
 ]
@@ -36,7 +41,12 @@ _TICKER_QUERIES: list[tuple[str, str]] = [
 _MARKET_QUERIES: list[tuple[str, str]] = [
     ("stock market breaking news today", SOURCE_COMPANY),
     ("stocks earnings reports today beat miss revenue", SOURCE_EARNINGS),
+    ("earnings surprises stocks today EPS revenue", SOURCE_EARNINGS),
+    ("after hours earnings results today stocks", SOURCE_EARNINGS),
     ("earnings calendar stocks reporting today", SOURCE_CALENDAR),
+    ("stocks biggest gainers losers today percent", SOURCE_MOVERS),
+    ("stocks hitting all time high today", SOURCE_ATH),
+    ("stocks surge plunge big move today", SOURCE_MOVERS),
     ("stocks merger acquisition deal announced today", SOURCE_MERGER),
     ("technology AI stocks news today", SOURCE_COMPANY),
 ]
@@ -49,7 +59,7 @@ def fetch_web_news() -> list[dict[str, Any]]:
     if not WEB_SEARCH_ENABLED:
         return []
 
-    watchlist = normalized_watchlist(get_setting("watchlist", []))[:MAX_WEB_TICKERS_PER_CYCLE]
+    watchlist = scan_universe(max_symbols=MAX_WEB_TICKERS_PER_CYCLE)
     topics = _normalized_topics(get_setting("search_topics", []))[:MAX_WEB_TOPICS_PER_CYCLE]
     seen_urls: set[str] = set()
     seen_title_fps: set[str] = set()

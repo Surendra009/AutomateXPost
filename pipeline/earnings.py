@@ -21,6 +21,7 @@ from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline
+from pipeline.market_universe import scan_universe
 from pipeline.watchlist_scope import in_watchlist, normalized_watchlist
 
 logger = setup_logging()
@@ -117,20 +118,23 @@ def _build_preview(event: dict[str, Any]) -> tuple[str, str, str] | None:
 
     parts = [f"EPS est {eps_est}" if eps_est else None, f"revenue est {rev_est}" if rev_est else None]
     est_line = " · ".join(p for p in parts if p)
-    if not est_line:
-        return None
 
     q_label = f"Q{quarter} " if quarter else ""
-    title = f"{symbol} reports {timing} — {est_line}"
-    summary = (
-        f"{symbol} {q_label}{year or ''} earnings preview ({hour_tag or timing}). "
-        f"Estimate: {est_line}."
-    ).strip()
+    if est_line:
+        title = f"{symbol} reports {timing} — {est_line}"
+        summary = (
+            f"{symbol} {q_label}{year or ''} earnings preview ({hour_tag or timing}). "
+            f"Estimate: {est_line}."
+        ).strip()
+        line2 = est_line
+    else:
+        title = f"{symbol} reports {q_label}{timing} today"
+        summary = f"{symbol} earnings on deck ({hour_tag or timing})"
+        line2 = "Street watching EPS, revenue, and guidance"
 
-    line1 = f"{symbol} reports {timing} today"
-    if hour_tag:
-        line1 = f"{symbol} reports {hour_tag} today"
-    draft = f"{line1}\n{est_line}\n\n${symbol}"
+    line1 = f"{symbol} reports {hour_tag} today" if hour_tag else f"{symbol} reports {timing} today"
+    line3 = "The trade is the surprise vs est and what management says on the call"
+    draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
     return title, summary, draft
 
 
@@ -220,6 +224,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
         return 0, 0
 
     watchlist = normalized_watchlist(get_setting("watchlist", []))
+    universe = set(scan_universe())
     has_watchlist = bool(watchlist)
 
     today = datetime.utcnow().date()
@@ -248,7 +253,10 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                 continue
 
             on_watchlist = has_watchlist and in_watchlist(symbol, watchlist)
+            in_universe = symbol in universe
             if has_watchlist and not on_watchlist:
+                continue
+            if not has_watchlist and not in_universe:
                 continue
 
             date_str = event.get("date") or today.isoformat()
@@ -318,8 +326,10 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                     budget.try_take(1)
                 continue
 
-            # Previews for watchlist tickers reporting today through preview window
-            if not on_watchlist:
+            # Previews for watchlist or default-universe tickers in the preview window
+            if has_watchlist and not on_watchlist:
+                continue
+            if not has_watchlist and not in_universe:
                 continue
             if event_date < today or event_date > preview_end:
                 continue

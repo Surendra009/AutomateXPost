@@ -55,13 +55,18 @@ OVERNIGHT_CATCHUP_HOUR = int(os.getenv("OVERNIGHT_CATCHUP_HOUR", "5"))  # run on
 OVERNIGHT_CATCHUP_MAX_AGE_HOURS = int(os.getenv("OVERNIGHT_CATCHUP_MAX_AGE_HOURS", "8"))  # 10pm–5am window
 WEEKEND_INTERVAL_HOURS = int(os.getenv("WEEKEND_INTERVAL_HOURS", "3"))  # Sat/Sun: one run per 3 hours
 MAX_HEADLINES_PER_CYCLE = 35
-MAX_DRAFTS_PER_CYCLE = 3
+MAX_DRAFTS_PER_CYCLE = int(os.getenv("MAX_DRAFTS_PER_CYCLE", "6"))
 MAX_EARNINGS_DRAFTS_PER_CYCLE = 5
-MAX_MARKET_EARNINGS_DRAFTS_PER_CYCLE = 3  # beat/miss drafts when watchlist is empty
+MAX_MARKET_EARNINGS_DRAFTS_PER_CYCLE = 5  # beat/miss drafts when watchlist is empty
 EARNINGS_PREVIEW_DAYS_FORWARD = 2  # preview drafts for watchlist tickers
 MAX_MACRO_DRAFTS_PER_CYCLE = 3
 MAX_SEC_DRAFTS_PER_CYCLE = 2
-MAX_COMPANY_NEWS_DRAFTS_PER_CYCLE = 3
+MAX_COMPANY_NEWS_DRAFTS_PER_CYCLE = 4
+MAX_MARKET_MOVER_DRAFTS_PER_CYCLE = int(os.getenv("MAX_MARKET_MOVER_DRAFTS_PER_CYCLE", "4"))
+MAX_MOVER_QUOTES_PER_CYCLE = int(os.getenv("MAX_MOVER_QUOTES_PER_CYCLE", "35"))
+MARKET_MOVER_PCT_THRESHOLD = float(os.getenv("MARKET_MOVER_PCT_THRESHOLD", "4.0"))
+ATH_PROXIMITY_PCT = float(os.getenv("ATH_PROXIMITY_PCT", "0.75"))
+MARKET_MOVERS_ENABLED = os.getenv("MARKET_MOVERS_ENABLED", "true").lower() in ("1", "true", "yes")
 MIN_RELEVANCE_SCORE = 0.75
 MIN_AI_RELEVANCE_SCORE = 0.72  # slightly lower bar for major AI product news
 STALE_DRAFT_HOURS = 8  # pending drafts removed from queue after this
@@ -76,8 +81,8 @@ REJECTION_LEARN_THRESHOLD = 2  # rejects before a title shape is treated as nois
 REJECTION_FUZZY_THRESHOLD = 88  # fuzzy match against learned rejected titles
 
 WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() in ("1", "true", "yes")
-MAX_WEB_RESULTS_PER_QUERY = int(os.getenv("MAX_WEB_RESULTS_PER_QUERY", "6"))
-MAX_WEB_TICKERS_PER_CYCLE = int(os.getenv("MAX_WEB_TICKERS_PER_CYCLE", "8"))
+MAX_WEB_RESULTS_PER_QUERY = int(os.getenv("MAX_WEB_RESULTS_PER_QUERY", "8"))
+MAX_WEB_TICKERS_PER_CYCLE = int(os.getenv("MAX_WEB_TICKERS_PER_CYCLE", "12"))
 MAX_WEB_TOPICS_PER_CYCLE = int(os.getenv("MAX_WEB_TOPICS_PER_CYCLE", "5"))
 FINNHUB_GENERAL_SUPPLEMENT = os.getenv("FINNHUB_GENERAL_SUPPLEMENT", "false").lower() in (
     "1",
@@ -137,6 +142,13 @@ SEC_EDGAR_8K_FEED = (
     "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-k&company=&dateb=&owner=include&count=40&output=atom",
 )
 SEC_USER_AGENT = os.getenv("SEC_USER_AGENT", "PostPilot/1.0 (automated news bot)")
+
+# Scanned when watchlist is empty or to supplement discovery (earnings, movers, company news)
+DEFAULT_MARKET_UNIVERSE = (
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "AVGO", "NFLX",
+    "CRM", "ORCL", "ADBE", "INTC", "QCOM", "MU", "COIN", "PLTR", "UBER", "JPM",
+    "BAC", "GS", "XOM", "CVX", "LLY", "UNH", "WMT", "COST", "DIS", "BA",
+)
 
 DEFAULT_SETTINGS = {
     "pipeline_enabled": True,

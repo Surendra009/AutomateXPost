@@ -9,9 +9,12 @@ from pipeline.ai_news import AI_SOURCES, is_ai_source, mentions_ai
 
 # Higher score = preferred for drafting
 SOURCE_PRIORITY: dict[str, int] = {
+    "Finnhub Movers": 102,
     "Finnhub Earnings": 100,
     "Web Search · earnings": 98,
-    "Web Search · calendar": 96,
+    "Web Search · movers": 97,
+    "Web Search · ATH": 96,
+    "Web Search · calendar": 95,
     "Finnhub Macro": 95,
     "Web Search · mergers": 94,
     "Web Search · topic": 93,
@@ -63,7 +66,8 @@ TICKER_SIGNAL = re.compile(r"\b[A-Z]{1,5}\b|\$[A-Z]{1,5}\b|nasdaq|s&p|dow\b", re
 STOCK_SIGNAL = re.compile(
     r"\b(earnings|revenue|eps|guidance|beat|miss|ipo|merger|acquire|"
     r"layoff|buyback|dividend|forecast|shares|stock|chip|semiconductor|"
-    r"openai|anthropic|claude|gemini)\b|\$[A-Z]{1,5}\b",
+    r"all.time high|record high|52.week|surge|soar|plunge|tumble|rally|selloff|"
+    r"openai|anthropic|claude|gemini)\b|\$[A-Z]{1,5}\b|\b\d+\.?\d*%\b",
     re.I,
 )
 

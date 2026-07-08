@@ -41,6 +41,8 @@ TRADE_SIGNALS = re.compile(
     r"fed|fomc|cpi|ppi|nfp|jobs report|gdp|inflation|rate cut|rate hike|"
     r"tariff|sanction|sec filing|8-k|10-k|merger|acquire|acquisition|"
     r"ipo|offering|buyback|dividend|layoff|forecast|"
+    r"all.time high|record high|52.week|surge|soar|plunge|tumble|rally|selloff|"
+    r"gainer|loser|percent move|"
     r"\$\d|billion|million|percent|%"
     r")\b|\$[A-Z]{1,5}\b",
     re.I,

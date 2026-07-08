@@ -26,6 +26,7 @@ from pipeline.filter import filter_headlines
 from pipeline.freshness import discard_stale_headlines
 from pipeline.ingest import get_unfiltered_headlines, ingest_headlines
 from pipeline.macro_calendar import process_macro_calendar
+from pipeline.market_movers import process_market_movers
 from pipeline.prioritize import select_diverse_for_drafting, select_headlines_for_filter
 from pipeline.stale import expire_stale_drafts
 from pipeline.schedule import (
@@ -97,6 +98,12 @@ def _active_news_sources() -> list[dict]:
         "type": "api",
         "enabled": fh_ok,
         "hint": "Supplement + watchlist" if fh_ok else "Optional — FINNHUB_KEY",
+    })
+    sources.append({
+        "name": "Finnhub Movers",
+        "type": "api",
+        "enabled": fh_ok,
+        "hint": "Big % moves and 52-week highs" if fh_ok else "Optional — FINNHUB_KEY",
     })
     sources.append({
         "name": "SEC 8-K (structured)",
@@ -195,6 +202,11 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
             if company_ingested:
                 ingest_count += company_ingested
                 ingest_by_source["Finnhub Company"] = company_ingested
+
+            movers_ingested, _ = process_market_movers(budget)
+            if movers_ingested:
+                ingest_count += movers_ingested
+                ingest_by_source["Finnhub Movers"] = movers_ingested
 
             headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
             headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
