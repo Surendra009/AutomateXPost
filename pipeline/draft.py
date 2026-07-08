@@ -20,7 +20,7 @@ from pipeline.templates import try_template_draft
 
 logger = setup_logging()
 
-MAX_CHARS = {"BREAKING": 260, "CONTEXT": 280, "SUMMARY": 380}
+MAX_CHARS = {"BREAKING": 275, "CONTEXT": 295, "SUMMARY": 400}
 
 DRAFT_SYSTEM_PROMPT = """You read tech and stock news, decide if it's worth posting on X, and write the post in one step.
 
@@ -37,17 +37,24 @@ Return JSON only:
 ## When to skip (skip=true)
 - Vague wire headlines with no specific company or data ("stocks rise", "investors await Fed")
 - Rehashed news with no new information
-- Can't explain what happened AND why it matters in two short lines
+- Can't explain what happened AND why it matters in three substantive lines
 - Minor UI tweaks or fluff without real product/market impact
 
 ## Post layout (use \\n in text)
 ```
-What happened (company + specific action)
+Hook — company + concrete action or surprise number
 
-Why it matters — useful takeaway for investors/builders
+Key detail — one specific fact (product, deal size, guidance, timeline)
+
+Why it matters — clear takeaway for investors or builders
 
 $TICKER
 ```
+
+## Tone
+- Informative and conversational — like a sharp market analyst, not a wire headline
+- Confident but not hypey; explain the story, don't sell it
+- Use plain language; avoid jargon ("read-through", "intraday", "yoy")
 
 ## Hook rules (critical for engagement)
 - Line 1 must stop the scroll: company + concrete action OR one surprise number
@@ -55,23 +62,26 @@ $TICKER
 - Prefer active verbs: launched, beat, cut, acquired, filed, raised
 
 ## Rules
-- Be specific: company, product, or one key number
-- Line 2 = the "so what" — competitive angle, stock impact, or user impact
+- Aim for 3 body lines before tickers — enough detail to stand alone, not a thread
+- Target 240–300 characters total (CONTEXT/BREAKING); SUMMARY up to ~360
+- Be specific: name the company, product, and at least one number when available
+- Line 3 = the "so what" — stock impact, competitive angle, or who wins/loses
 - Sentence case. Never ALL CAPS except $TICKERS
-- Max 2 numbers in the whole post
+- Up to 3 numbers in the whole post (EPS, revenue, %, deal size)
 - No emojis
 - Optional: one topic hashtag on macro/earnings days only if allow_hashtags is true (#CPI, #NVDAearnings)
 - Otherwise no hashtags — cashtags on the last line only
-- Each line under ~70 characters
+- Each line under ~95 characters
 - Tickers on the last line (use tickers array too)
 - Don't copy the headline verbatim
 
 ## Good example
 ```
-Anthropic launched Claude on mobile and web
-Cowork agents now run outside the desktop app
+Nvidia beat Q4 estimates on data-center demand
+Revenue hit $22.1B vs $20.4B expected; guidance topped the street
+Hyperscaler capex keeps flowing into AI chips — margin story intact
 
-$GOOGL $AMZN
+$NVDA
 ```"""
 
 
@@ -240,7 +250,7 @@ def draft_posts(
 
         article_text = get_article_text_for_draft(headline, classification)
         prompt = _build_draft_prompt(headline, classification, article_text)
-        raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=600)
+        raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=750)
         if not raw:
             _discard_headline(headline, "draft LLM failed")
             continue
@@ -301,21 +311,21 @@ def _passes_style_check(text: str, fmt: str) -> bool:
 
     dollar_count = len(re.findall(r"(?:~)?\$[\d,.]+[BMK]?", text))
     pct_count = len(re.findall(r"\d+\.?\d*%", text))
-    if dollar_count > 2 or (dollar_count + pct_count) > 3:
+    if dollar_count > 3 or (dollar_count + pct_count) > 4:
         return False
 
     lines = [ln for ln in text.split("\n") if ln.strip()]
-    if len(lines) < 2:
+    if len(lines) < 3:
         return False
 
-    if "\n" not in text and len(text) > 100:
+    if "\n" not in text and len(text) > 120:
         return False
 
     for ln in lines:
-        if len(ln) > 100:
+        if len(ln) > 120:
             return False
 
-    if len(lines) > 6:
+    if len(lines) > 7:
         return False
 
     jargon = re.compile(
@@ -364,7 +374,7 @@ def regenerate_draft(draft_id: int) -> Draft | None:
     }
     article_text = get_article_text_for_draft(headline, classification)
     prompt = _build_draft_prompt(headline, classification, article_text)
-    raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=600)
+    raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=750)
     if not raw:
         return None
 

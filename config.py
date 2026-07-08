@@ -65,6 +65,7 @@ REJECTION_FUZZY_THRESHOLD = 88  # fuzzy match against learned rejected titles
 WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() in ("1", "true", "yes")
 MAX_WEB_RESULTS_PER_QUERY = int(os.getenv("MAX_WEB_RESULTS_PER_QUERY", "6"))
 MAX_WEB_TICKERS_PER_CYCLE = int(os.getenv("MAX_WEB_TICKERS_PER_CYCLE", "8"))
+MAX_WEB_TOPICS_PER_CYCLE = int(os.getenv("MAX_WEB_TOPICS_PER_CYCLE", "5"))
 FINNHUB_GENERAL_SUPPLEMENT = os.getenv("FINNHUB_GENERAL_SUPPLEMENT", "false").lower() in (
     "1",
     "true",
@@ -129,6 +130,7 @@ DEFAULT_SETTINGS = {
     "daily_post_cap": 20,
     "cooldown_minutes": 5,
     "watchlist": [],
+    "search_topics": [],
     "paused_until": None,
     "dedup_mode": "pipeline",
     "allow_hashtags": False,

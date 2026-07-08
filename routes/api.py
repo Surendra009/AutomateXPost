@@ -58,6 +58,7 @@ class SettingsPatch(BaseModel):
     daily_post_cap: Optional[int] = None
     cooldown_minutes: Optional[int] = None
     watchlist: Optional[list[str]] = None
+    search_topics: Optional[list[str]] = None
     paused_until: Optional[str] = None
     dedup_mode: Optional[str] = None
     allow_hashtags: Optional[bool] = None
@@ -369,6 +370,19 @@ def patch_settings(request: Request, body: SettingsPatch):
         set_setting("cooldown_minutes", body.cooldown_minutes)
     if body.watchlist is not None:
         set_setting("watchlist", [t.upper().strip() for t in body.watchlist if t.strip()])
+    if body.search_topics is not None:
+        seen: set[str] = set()
+        topics: list[str] = []
+        for raw in body.search_topics:
+            topic = " ".join(str(raw).strip().split())
+            if not topic:
+                continue
+            key = topic.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            topics.append(topic[:80])
+        set_setting("search_topics", topics)
     if body.paused_until is not None:
         set_setting("paused_until", body.paused_until)
     if body.dedup_mode is not None:

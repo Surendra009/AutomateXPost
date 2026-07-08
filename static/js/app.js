@@ -17,6 +17,8 @@ let editingDraftId = null;
 let rejectDraftId = null;
 let scheduleDraftId = null;
 let rejectionReasons = [];
+let watchlist = [];
+let searchTopics = [];
 
 // ── API helpers ──────────────────────────────────────────
 
@@ -464,6 +466,8 @@ async function loadSettings() {
     document.getElementById('push-enabled').checked = data.push_enabled !== false;
     watchlist = data.watchlist || [];
     renderWatchlist();
+    searchTopics = data.search_topics || [];
+    renderTopics();
 
     const pauseEl = document.getElementById('pause-status');
     if (data.paused_until) {
@@ -569,6 +573,33 @@ document.getElementById('add-ticker').addEventListener('click', () => {
   input.value = '';
 });
 
+function renderTopics() {
+  const container = document.getElementById('topic-chips');
+  if (!container) return;
+  container.innerHTML = searchTopics.map((topic) => `
+    <span class="chip">${esc(topic)}
+      <button class="chip-remove" data-topic="${esc(topic)}">&times;</button>
+    </span>`).join('');
+  container.querySelectorAll('.chip-remove').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      searchTopics = searchTopics.filter((t) => t !== btn.dataset.topic);
+      renderTopics();
+    });
+  });
+}
+
+document.getElementById('add-topic').addEventListener('click', () => {
+  const input = document.getElementById('topic-input');
+  const val = input.value.trim().replace(/\s+/g, ' ');
+  if (!val) return;
+  const key = val.toLowerCase();
+  if (!searchTopics.some((t) => t.toLowerCase() === key)) {
+    searchTopics.push(val);
+    renderTopics();
+  }
+  input.value = '';
+});
+
 document.getElementById('test-finnhub').addEventListener('click', async () => {
   const btn = document.getElementById('test-finnhub');
   btn.disabled = true;
@@ -639,6 +670,7 @@ document.getElementById('save-settings').addEventListener('click', async () => {
         allow_hashtags: document.getElementById('allow-hashtags').checked,
         push_enabled: document.getElementById('push-enabled').checked,
         watchlist,
+        search_topics: searchTopics,
       }),
     });
     showToast('Settings saved', 'success');

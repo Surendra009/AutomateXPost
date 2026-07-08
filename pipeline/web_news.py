@@ -8,6 +8,7 @@ from typing import Any
 from config import (
     MAX_WEB_RESULTS_PER_QUERY,
     MAX_WEB_TICKERS_PER_CYCLE,
+    MAX_WEB_TOPICS_PER_CYCLE,
     WEB_SEARCH_ENABLED,
 )
 from database import get_setting
@@ -23,6 +24,7 @@ SOURCE_EARNINGS = "Web Search · earnings"
 SOURCE_MERGER = "Web Search · mergers"
 SOURCE_COMPANY = "Web Search · company"
 SOURCE_CALENDAR = "Web Search · calendar"
+SOURCE_TOPIC = "Web Search · topic"
 
 _TICKER_QUERIES: list[tuple[str, str]] = [
     ('"{symbol}" earnings EPS revenue beat miss report', SOURCE_EARNINGS),
@@ -43,6 +45,7 @@ def fetch_web_news() -> list[dict[str, Any]]:
         return []
 
     watchlist = normalized_watchlist(get_setting("watchlist", []))[:MAX_WEB_TICKERS_PER_CYCLE]
+    topics = _normalized_topics(get_setting("search_topics", []))[:MAX_WEB_TOPICS_PER_CYCLE]
     seen_urls: set[str] = set()
     items: list[dict[str, Any]] = []
     per_source: dict[str, int] = {}
@@ -68,6 +71,13 @@ def fetch_web_news() -> list[dict[str, Any]]:
         if count:
             per_source[source] = per_source.get(source, 0) + count
 
+    for topic in topics:
+        query = f'"{topic}" news'
+        batch = search_google_news(query, source_label=SOURCE_TOPIC, limit=MAX_WEB_RESULTS_PER_QUERY)
+        count = add_batch(batch)
+        if count:
+            per_source[SOURCE_TOPIC] = per_source.get(SOURCE_TOPIC, 0) + count
+
     today = datetime.utcnow().strftime("%B %d %Y")
     for symbol in watchlist:
         for template, source in _TICKER_QUERIES:
@@ -91,3 +101,18 @@ def fetch_web_news() -> list[dict[str, Any]]:
     if items:
         logger.info("Web search: %d headlines (%s)", len(items), per_source)
     return items
+
+
+def _normalized_topics(topics: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in topics:
+        topic = " ".join(str(raw).strip().split())
+        if not topic:
+            continue
+        key = topic.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(topic[:80])
+    return out

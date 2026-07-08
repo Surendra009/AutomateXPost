@@ -107,11 +107,19 @@ def _parse_json_array(text: str) -> list[dict] | None:
     return None
 
 
-def _build_batch_prompt(headlines: list[Headline], watchlist: list[str]) -> str:
+def _build_batch_prompt(
+    headlines: list[Headline],
+    watchlist: list[str],
+    search_topics: list[str] | None = None,
+) -> str:
     watchlist_str = ", ".join(watchlist) if watchlist else "none (only pass high-impact stories)"
+    topics = search_topics or []
+    topics_str = ", ".join(topics) if topics else "none"
     lines = [
         f"User watchlist: {watchlist_str}",
+        f"User search topics: {topics_str}",
         "User wants tech & stock news: specific companies, earnings, AI product launches, tickers.",
+        "Prioritize stories matching search topics even without watchlist tickers.",
         "Deprioritize vague wire headlines (market wrap, stocks rise/fall) unless they name a company or data release.",
         "Without watchlist: pass high-impact stock/tech stories OR material AI product news.",
         "",
@@ -126,7 +134,19 @@ def _build_batch_prompt(headlines: list[Headline], watchlist: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _passes_hard_filter(classification: dict, watchlist: list[str], headline: Headline | None = None) -> bool:
+def _matches_search_topics(headline: Headline | None, topics: list[str]) -> bool:
+    if not headline or not topics:
+        return False
+    text = f"{headline.title} {headline.summary}".lower()
+    return any(topic.lower() in text for topic in topics if topic.strip())
+
+
+def _passes_hard_filter(
+    classification: dict,
+    watchlist: list[str],
+    headline: Headline | None = None,
+    search_topics: list[str] | None = None,
+) -> bool:
     """Code-level gate after LLM — strict for markets, relaxed for AI product news."""
     if not classification.get("relevant"):
         return False
@@ -144,12 +164,13 @@ def _passes_hard_filter(classification: dict, watchlist: list[str], headline: He
     tickers = [t.upper() for t in classification.get("tickers", [])]
     watchlist_upper = [w.upper() for w in watchlist]
     on_watchlist = bool(watchlist_upper and any(t in watchlist_upper for t in tickers))
+    on_topic = _matches_search_topics(headline, search_topics or [])
 
     # AI product news — allow without forcing stock-trade framing
     if category == "ai":
         if classification.get("tradeable") is False and impact != "high":
             return False
-        if impact == "med" and score < MIN_RELEVANCE_SCORE and not on_watchlist:
+        if impact == "med" and score < MIN_RELEVANCE_SCORE and not on_watchlist and not on_topic:
             return False
         text = ""
         if headline:
@@ -162,7 +183,7 @@ def _passes_hard_filter(classification: dict, watchlist: list[str], headline: He
         return False
 
     # med impact: require watchlist hit OR score >= 0.85
-    if impact == "med" and not on_watchlist and score < 0.85:
+    if impact == "med" and not on_watchlist and not on_topic and score < 0.85:
         return False
 
     # "other" category needs high impact and strong score
@@ -192,11 +213,12 @@ def _apply_classification(
     classification: dict[str, Any],
     watchlist: list[str],
     results: list[tuple[Headline, dict]],
+    search_topics: list[str] | None = None,
 ) -> None:
     """Run hard filter and mark headline filtered or discarded."""
     classification = enrich_ai_classification(classification, headline)
 
-    if not _passes_hard_filter(classification, watchlist, headline):
+    if not _passes_hard_filter(classification, watchlist, headline, search_topics):
         _discard_headline(headline, "failed hard filter")
         return
 
@@ -215,6 +237,7 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
         return []
 
     watchlist = get_setting("watchlist", [])
+    search_topics = get_setting("search_topics", [])
     results: list[tuple[Headline, dict]] = []
 
     # Pre-filter obvious noise (no API cost)
@@ -239,13 +262,13 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
         cached = get_cached_classification(h.title, h.source)
         if cached is not None:
             cache_hits += 1
-            _apply_classification(h, cached, watchlist, results)
+            _apply_classification(h, cached, watchlist, results, search_topics)
         else:
             need_llm.append(h)
 
     for batch_start in range(0, len(need_llm), 10):
         batch = need_llm[batch_start : batch_start + 10]
-        prompt = _build_batch_prompt(batch, watchlist)
+        prompt = _build_batch_prompt(batch, watchlist, search_topics)
         raw = _call_claude(FILTER_SYSTEM_PROMPT, prompt, FILTER_MODEL)
         if not raw:
             continue
@@ -260,7 +283,7 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
                 break
             classification: dict[str, Any] = parsed[i]
             cache_classification(h.title, h.source, classification)
-            _apply_classification(h, classification, watchlist, results)
+            _apply_classification(h, classification, watchlist, results, search_topics)
 
     prune_classification_cache()
 

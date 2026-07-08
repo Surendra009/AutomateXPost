@@ -14,6 +14,7 @@ SOURCE_PRIORITY: dict[str, int] = {
     "Web Search · calendar": 96,
     "Finnhub Macro": 95,
     "Web Search · mergers": 94,
+    "Web Search · topic": 93,
     "Finnhub Company": 92,
     "Web Search · company": 91,
     "Finnhub watchlist": 90,
