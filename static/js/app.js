@@ -150,13 +150,16 @@ function updateBadge(count) {
 function renderQueue(drafts) {
   const list = document.getElementById('queue-list');
   const empty = document.getElementById('queue-empty');
-  if (!drafts.length) {
+  const sorted = [...drafts].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
+  if (!sorted.length) {
     list.innerHTML = '';
     empty.classList.remove('hidden');
     return;
   }
   empty.classList.add('hidden');
-  list.innerHTML = drafts.map((d) => renderDraftCard(d)).join('');
+  list.innerHTML = sorted.map((d) => renderDraftCard(d)).join('');
   attachCardListeners();
 }
 

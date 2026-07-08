@@ -23,11 +23,12 @@ def _pick_best(group: list[tuple[Draft, Headline]]) -> tuple[Draft, Headline]:
 
     def score(item: tuple[Draft, Headline]) -> tuple:
         draft, headline = item
+        created = draft.created_at.timestamp() if draft.created_at else 0
         return (
+            created,
             float(draft.confidence or 0),
             impact_rank.get(draft.impact, 1),
             headline.published_at.timestamp() if headline.published_at else 0,
-            draft.created_at.timestamp() if draft.created_at else 0,
         )
 
     return max(group, key=score)

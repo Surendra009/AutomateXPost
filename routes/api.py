@@ -146,10 +146,19 @@ def get_queue(request: Request):
         pending_only = [d for d in drafts if d.status == "pending"]
         if dedup_at_queue() and pending_only:
             pairs, hidden_duplicates = dedupe_pending_drafts(pending_only, headlines)
-            scheduled = [(d, headlines[d.headline_id]) for d in drafts if d.status == "scheduled"]
-            pairs = scheduled + pairs
+            scheduled = [
+                (d, headlines[d.headline_id])
+                for d in drafts
+                if d.status == "scheduled" and d.headline_id in headlines
+            ]
+            pairs = pairs + scheduled
         else:
             pairs = [(d, headlines.get(d.headline_id)) for d in drafts if d.headline_id in headlines]
+
+        pairs.sort(
+            key=lambda p: p[0].created_at.timestamp() if p[0].created_at else 0,
+            reverse=True,
+        )
 
         result = [_draft_to_dict(d, h) for d, h in pairs if h]
 
