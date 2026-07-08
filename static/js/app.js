@@ -202,9 +202,9 @@ function renderDraftCard(d) {
       </div>`;
   }
 
-  const storyMins = d.story_age_minutes ?? 0;
-  const ageClass = storyMins >= 240 ? 'is-stale' : storyMins >= 180 ? 'is-aging' : '';
-  const storyLabel = d.story_age || d.age;
+  const draftMins = d.draft_age_minutes ?? 0;
+  const ageClass = draftMins >= 420 ? 'is-stale' : draftMins >= 360 ? 'is-aging' : '';
+  const ageLabel = d.age;
 
   return `
     <article class="post-card" data-id="${d.id}" data-impact="${esc(d.impact)}">
@@ -215,7 +215,7 @@ function renderDraftCard(d) {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           </button>
           <span class="post-age ${ageClass}" title="Draft created ${esc(d.age)} ago">
-            <span class="post-age-label">Story</span> ${esc(storyLabel)}
+            <span class="post-age-label">Draft</span> ${esc(ageLabel)}
           </span>
         </div>
       </div>

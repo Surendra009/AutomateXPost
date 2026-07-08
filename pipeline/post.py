@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from sqlmodel import select
 
-from config import DRY_RUN, MAX_NEWS_AGE_HOURS, get_settings
+from config import DRY_RUN, MAX_NEWS_AGE_HOURS, STALE_DRAFT_HOURS, get_settings
 from database import count_posts_today, get_session, last_post_time
 from logging_config import setup_logging
 from models import Draft, Headline, Post
@@ -41,8 +41,8 @@ def check_safety_rails(draft: Draft, daily_cap: int, cooldown_minutes: int) -> N
             )
 
     age = datetime.utcnow() - draft.created_at
-    if age > timedelta(hours=MAX_NEWS_AGE_HOURS):
-        raise PostingError(f"Draft is older than {MAX_NEWS_AGE_HOURS} hours (stale news)")
+    if age > timedelta(hours=STALE_DRAFT_HOURS):
+        raise PostingError(f"Draft is older than {STALE_DRAFT_HOURS} hours (stale)")
 
     today_count = count_posts_today()
     if today_count >= daily_cap:
