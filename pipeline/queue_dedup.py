@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from rapidfuzz import fuzz
 from sqlmodel import select
 
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
-from pipeline.story_key import title_fingerprint
+from pipeline.story_key import normalize_title, title_fingerprint
 
 logger = setup_logging()
+
+_QUEUE_FUZZY_THRESHOLD = 85
 
 
 def _story_key(headline: Headline) -> str:
@@ -34,6 +37,34 @@ def _pick_best(group: list[tuple[Draft, Headline]]) -> tuple[Draft, Headline]:
     return max(group, key=score)
 
 
+def _merge_fuzzy_groups(
+    groups: dict[str, list[tuple[Draft, Headline]]],
+) -> dict[str, list[tuple[Draft, Headline]]]:
+    """Merge groups whose headlines are fuzzy duplicates (same event, different wires)."""
+    keys = list(groups.keys())
+    merged: dict[str, list[tuple[Draft, Headline]]] = {}
+    used: set[str] = set()
+
+    for key_a in keys:
+        if key_a in used:
+            continue
+        combined = list(groups[key_a])
+        rep_title = normalize_title(groups[key_a][0][1].title)
+
+        for key_b in keys:
+            if key_b == key_a or key_b in used:
+                continue
+            other_title = normalize_title(groups[key_b][0][1].title)
+            if fuzz.ratio(rep_title, other_title) >= _QUEUE_FUZZY_THRESHOLD:
+                combined.extend(groups[key_b])
+                used.add(key_b)
+
+        merged[key_a] = combined
+        used.add(key_a)
+
+    return merged
+
+
 def dedupe_pending_drafts(
     drafts: list[Draft],
     headlines: dict[int, Headline],
@@ -53,6 +84,8 @@ def dedupe_pending_drafts(
     for pair in pairs:
         key = _story_key(pair[1])
         groups.setdefault(key, []).append(pair)
+
+    groups = _merge_fuzzy_groups(groups)
 
     visible: list[tuple[Draft, Headline]] = []
     stale_ids: list[int] = []

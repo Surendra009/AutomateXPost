@@ -16,6 +16,28 @@ logger = setup_logging()
 
 _DEDUP_STATUSES = ("pending", "posted", "approved", "rejected", "stale")
 _ACTIVE_DRAFT_STATUSES = ("pending", "scheduled")
+_QUEUE_HOOK_FUZZY = 85
+
+
+def _draft_hook(text: str) -> str:
+    import re
+
+    for ln in text.split("\n"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        if all(re.fullmatch(r"\$[A-Z]{1,5}", t) for t in ln.split()):
+            continue
+        return normalize_title(ln)
+    return ""
+
+
+def _hooks_match(title: str, draft_text: str) -> bool:
+    hook = _draft_hook(draft_text)
+    norm_title = normalize_title(title)
+    if not hook or not norm_title:
+        return False
+    return fuzz.ratio(hook, norm_title) >= _QUEUE_HOOK_FUZZY
 
 
 def _title_fp_for_headline(headline: Headline) -> str:
@@ -36,6 +58,8 @@ def story_has_active_draft(title: str) -> bool:
 
         for _draft, headline in rows:
             if _title_fp_for_headline(headline) == cross_fp:
+                return True
+            if _hooks_match(title, _draft.text):
                 return True
             if norm:
                 other = normalize_title(headline.title)
@@ -92,6 +116,8 @@ def was_recently_drafted(title: str, source: str, hours: int | None = None) -> b
                 return True
             headline_fp = headline.title_fp or title_fingerprint(headline.title)
             if headline_fp == cross_fp:
+                return True
+            if _hooks_match(title, _draft.text):
                 return True
             if norm:
                 other = normalize_title(headline.title)

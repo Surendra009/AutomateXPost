@@ -130,6 +130,11 @@ def _resolve_tickers(draft_data: dict, classification: dict, headline: Headline)
     return tickers
 
 
+def _is_cashtag_line(ln: str) -> bool:
+    tokens = ln.strip().split()
+    return bool(tokens) and all(re.fullmatch(r"\$[A-Z]{1,5}", t) for t in tokens)
+
+
 def _normalize_post(text: str, tickers: list[str]) -> str:
     """Clean up line breaks and ensure tickers on final line."""
     text = text.replace("\\n", "\n").strip()
@@ -144,9 +149,8 @@ def _normalize_post(text: str, tickers: list[str]) -> str:
         cleaned.append(ln)
 
     body_lines = []
-    ticker_pattern = re.compile(r"^\$[A-Z]{1,5}$")
     for ln in cleaned:
-        if ticker_pattern.match(ln.replace(" ", "")) and len(ln.split()) <= 3:
+        if _is_cashtag_line(ln):
             continue
         body_lines.append(ln)
 
@@ -155,8 +159,9 @@ def _normalize_post(text: str, tickers: list[str]) -> str:
 
     if tickers:
         ticker_line = " ".join(f"${t.upper()}" for t in tickers)
-        body_lines.append("")
-        body_lines.append(ticker_line)
+        if not body_lines or body_lines[-1] != ticker_line:
+            body_lines.append("")
+            body_lines.append(ticker_line)
 
     return "\n".join(body_lines).strip()
 

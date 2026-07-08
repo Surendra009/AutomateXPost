@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from models import Headline
 from pipeline.ai_news import (
     AI_PRODUCT_SIGNALS,
+    GEOPOLITICS_CONFLICT,
     infer_ai_tickers,
     is_ai_source,
     is_material_ai_update,
@@ -79,6 +80,14 @@ MACRO_TAKEAWAY = {
     "Fed": "Rates path repriced across stocks and bonds",
 }
 
+GEOPOLITICS_SIGNAL = re.compile(
+    r"\b("
+    r"iran|israel|ukraine|russia|strike|missile|war|tanker|oil|crude|hormuz|"
+    r"military|pentagon|troops|navy|drone|sanctions|conflict|attacks"
+    r")\b",
+    re.I,
+)
+
 # Official AI blogs — highest confidence for templates
 AI_BLOG_SOURCES = {
     "OpenAI Blog",
@@ -101,7 +110,12 @@ class TemplateDraft:
 
 def try_template_draft(headline: Headline, classification: dict) -> TemplateDraft | None:
     """Return a template draft if the story is structured enough, else None."""
-    for builder in (try_earnings_template, try_macro_template, try_ai_launch_template):
+    for builder in (
+        try_earnings_template,
+        try_macro_template,
+        try_geopolitics_template,
+        try_ai_launch_template,
+    ):
         result = builder(headline, classification)
         if result:
             return result
@@ -254,10 +268,50 @@ def _ai_takeaway(title: str, summary: str) -> str:
     return "Another step in the AI product war"
 
 
+def _geopolitics_takeaway(title: str, summary: str) -> str:
+    blob = f"{title} {summary}".lower()
+    if re.search(r"\b(iran|tanker|hormuz|strike|missile|attacks)\b", blob):
+        return "Oil supply risk rises — energy names reprice quickly"
+    if re.search(r"\b(oil|crude|opec|gas)\b", blob):
+        return "Crude volatility spreads to majors and oil ETFs"
+    return "Geopolitical risk shifts defensive and energy trades"
+
+
+def try_geopolitics_template(headline: Headline, classification: dict) -> TemplateDraft | None:
+    text = f"{headline.title} {headline.summary}"
+    cat = classification.get("category", "other")
+    if cat == "ai":
+        return None
+    if cat not in ("geopolitics", "macro", "other") and not GEOPOLITICS_SIGNAL.search(text):
+        return None
+    if not GEOPOLITICS_SIGNAL.search(text):
+        return None
+
+    tickers = _extract_tickers(headline, classification)
+    if not tickers:
+        return None
+
+    line1 = _shorten(headline.title, 95)
+    line2 = _geopolitics_takeaway(headline.title, headline.summary)
+    line3 = "Watch oil majors and energy ETFs for follow-through"
+    body = f"{line1}\n{line2}\n{line3}\n\n" + " ".join(f"${t}" for t in tickers)
+
+    return TemplateDraft(
+        text=body,
+        format="BREAKING",
+        tickers=tickers,
+        confidence=0.88,
+        category="geopolitics",
+        impact=classification.get("impact", "high"),
+    )
+
+
 def try_ai_launch_template(headline: Headline, classification: dict) -> TemplateDraft | None:
     text = f"{headline.title} {headline.summary}"
+    if GEOPOLITICS_CONFLICT.search(text) and not is_ai_source(headline):
+        return None
     is_ai = classification.get("category") == "ai" or is_ai_source(headline)
-    if not is_ai or not is_material_ai_update(text):
+    if not is_ai or not is_material_ai_update(text, headline):
         return None
 
     # Prefer official blogs; others need product signal in title

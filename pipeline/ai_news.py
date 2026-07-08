@@ -34,7 +34,7 @@ AI_NEWS_SIGNALS = re.compile(
     re.I,
 )
 
-# Material AI product events (not explainers)
+# Material AI product events (not explainers) — verbs alone are NOT enough
 AI_PRODUCT_SIGNALS = re.compile(
     r"\b("
     r"launch(es|ed|ing)?|release[sd]?|unveil(s|ed|ing)?|roll(s|ed|ing)? out|"
@@ -42,6 +42,23 @@ AI_PRODUCT_SIGNALS = re.compile(
     r"now available|general availability|ga\b|preview|beta|"
     r"new (model|version|capabilit|feature|tool|agent)|"
     r"gpt-[\d\.o]+|claude [\d\.]|gemini [\d\.]|llama [\d\.]"
+    r")\b",
+    re.I,
+)
+
+AI_LAB_NAMES = re.compile(
+    r"\b("
+    r"openai|chatgpt|anthropic|claude|google|gemini|deepmind|meta|llama|"
+    r"microsoft|copilot|nvidia|amazon|bedrock|apple intelligence|mistral|xai|grok|deepseek"
+    r")\b",
+    re.I,
+)
+
+# Military/geopolitics — "launches" here must not trigger AI templates
+GEOPOLITICS_CONFLICT = re.compile(
+    r"\b("
+    r"iran|israel|ukraine|russia|strike|missile|war|tanker|oil|crude|hormuz|"
+    r"military|pentagon|troops|navy|drone|sanctions|conflict|attacks"
     r")\b",
     re.I,
 )
@@ -69,8 +86,15 @@ def mentions_ai(text: str) -> bool:
     return bool(AI_NEWS_SIGNALS.search(text))
 
 
-def is_material_ai_update(text: str) -> bool:
-    return mentions_ai(text) and bool(AI_PRODUCT_SIGNALS.search(text))
+def is_material_ai_update(text: str, headline: Headline | None = None) -> bool:
+    """True for real AI product news — not military 'launches' or generic verbs."""
+    if GEOPOLITICS_CONFLICT.search(text) and not AI_LAB_NAMES.search(text):
+        return False
+    if not AI_PRODUCT_SIGNALS.search(text):
+        return False
+    if headline is not None and is_ai_source(headline):
+        return True
+    return bool(AI_LAB_NAMES.search(text))
 
 
 def infer_ai_tickers(text: str) -> list[str]:
@@ -86,7 +110,11 @@ def infer_ai_tickers(text: str) -> list[str]:
 def enrich_ai_classification(classification: dict, headline: Headline) -> dict:
     """Ensure AI stories have category and tickers for the hard filter."""
     text = f"{headline.title} {headline.summary}"
-    if classification.get("category") != "ai" and (is_ai_source(headline) or is_material_ai_update(text)):
+    if classification.get("category") in ("geopolitics", "macro", "earnings"):
+        return classification
+    if classification.get("category") != "ai" and (
+        is_ai_source(headline) or is_material_ai_update(text, headline)
+    ):
         classification["category"] = "ai"
 
     if classification.get("category") == "ai":
