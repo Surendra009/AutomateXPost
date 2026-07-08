@@ -22,7 +22,8 @@ from pipeline.feedback import record_rejection
 from pipeline.freshness import discard_stale_headlines, format_age, age_minutes, is_fresh
 from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
-from pipeline.stale import expire_stale_drafts
+from pipeline.dedup_mode import DEDUP_MODE_LABELS, get_dedup_mode
+from pipeline.queue_dedup import dedupe_pending_drafts
 
 logger = setup_logging()
 router = APIRouter(prefix="/api")
@@ -42,6 +43,7 @@ class SettingsPatch(BaseModel):
     cooldown_minutes: Optional[int] = None
     watchlist: Optional[list[str]] = None
     paused_until: Optional[str] = None
+    dedup_mode: Optional[str] = None
 
 
 def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
@@ -101,17 +103,36 @@ def get_queue(request: Request):
     require_auth(request)
     expire_stale_drafts()
     discard_stale_headlines()
+    hidden_duplicates = 0
     with get_session() as session:
-        drafts = session.exec(
-            select(Draft)
-            .where(Draft.status == "pending")
-            .order_by(Draft.created_at.desc())
-        ).all()
-        result = []
-        for d in drafts:
-            headline = session.get(Headline, d.headline_id)
-            result.append(_draft_to_dict(d, headline))
-    return {"drafts": result, "count": len(result)}
+        drafts = list(
+            session.exec(
+                select(Draft)
+                .where(Draft.status == "pending")
+                .order_by(Draft.created_at.desc())
+            ).all()
+        )
+        headline_ids = [d.headline_id for d in drafts]
+        headlines: dict[int, Headline] = {}
+        if headline_ids:
+            rows = session.exec(select(Headline).where(Headline.id.in_(headline_ids))).all()
+            headlines = {h.id: h for h in rows if h.id is not None}
+
+        from pipeline.dedup_mode import dedup_at_queue
+
+        if dedup_at_queue() and drafts:
+            pairs, hidden_duplicates = dedupe_pending_drafts(drafts, headlines)
+        else:
+            pairs = [(d, headlines[d.headline_id]) for d in drafts if d.headline_id in headlines]
+
+        result = [_draft_to_dict(d, h) for d, h in pairs]
+
+    return {
+        "drafts": result,
+        "count": len(result),
+        "dedup_mode": get_dedup_mode(),
+        "hidden_duplicates": hidden_duplicates,
+    }
 
 
 @router.post("/drafts/{draft_id}/approve")
@@ -246,4 +267,10 @@ def patch_settings(request: Request, body: SettingsPatch):
         set_setting("watchlist", [t.upper().strip() for t in body.watchlist if t.strip()])
     if body.paused_until is not None:
         set_setting("paused_until", body.paused_until)
+    if body.dedup_mode is not None:
+        from pipeline.dedup_mode import DEDUP_MODES
+
+        if body.dedup_mode not in DEDUP_MODES:
+            raise HTTPException(status_code=400, detail="dedup_mode must be pipeline, queue, or off")
+        set_setting("dedup_mode", body.dedup_mode)
     return get_all_settings()

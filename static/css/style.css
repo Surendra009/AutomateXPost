@@ -680,6 +680,13 @@ body {
   text-align: center;
 }
 
+.select-compact {
+  width: auto;
+  min-width: 140px;
+  text-align: left;
+  padding-right: 28px;
+}
+
 .input-suffix-wrap {
   display: flex;
   align-items: center;

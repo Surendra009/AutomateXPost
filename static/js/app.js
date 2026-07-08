@@ -3,7 +3,16 @@
 const API = '/api';
 let currentTab = 'queue';
 let refreshTimer = null;
-let watchlist = [];
+const DEDUP_MODE_DESC = {
+  pipeline: 'Block duplicate stories before drafting (saves API cost).',
+  queue: 'Draft duplicates allowed, but only the best draft per story shows in queue.',
+  off: 'No deduplication — duplicate stories may appear.',
+};
+
+function updateDedupModeDesc(mode) {
+  const el = document.getElementById('dedup-mode-desc');
+  if (el) el.textContent = DEDUP_MODE_DESC[mode] || DEDUP_MODE_DESC.pipeline;
+}
 let editingDraftId = null;
 
 // ── API helpers ──────────────────────────────────────────
@@ -106,6 +115,10 @@ async function loadQueue(silent = false) {
     const data = await api('/queue');
     renderQueue(data.drafts);
     updateBadge(data.count);
+    if (data.hidden_duplicates > 0 && currentTab === 'queue') {
+      const sub = document.getElementById('header-subtitle');
+      sub.textContent = `${data.count} draft${data.count === 1 ? '' : 's'} · ${data.hidden_duplicates} duplicate${data.hidden_duplicates === 1 ? '' : 's'} hidden`;
+    }
   } catch (err) {
     if (!silent) showToast(err.message, 'error');
   }
@@ -410,6 +423,9 @@ async function loadSettings() {
     document.getElementById('pipeline-toggle').checked = data.pipeline_enabled;
     document.getElementById('daily-cap').value = data.daily_post_cap;
     document.getElementById('cooldown').value = data.cooldown_minutes;
+    const dedupMode = data.dedup_mode || 'pipeline';
+    document.getElementById('dedup-mode').value = dedupMode;
+    updateDedupModeDesc(dedupMode);
     watchlist = data.watchlist || [];
     renderWatchlist();
 
@@ -569,6 +585,10 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('dedup-mode').addEventListener('change', (e) => {
+  updateDedupModeDesc(e.target.value);
+});
+
 document.getElementById('save-settings').addEventListener('click', async () => {
   try {
     await api('/settings', {
@@ -577,6 +597,7 @@ document.getElementById('save-settings').addEventListener('click', async () => {
         pipeline_enabled: document.getElementById('pipeline-toggle').checked,
         daily_post_cap: parseInt(document.getElementById('daily-cap').value),
         cooldown_minutes: parseInt(document.getElementById('cooldown').value),
+        dedup_mode: document.getElementById('dedup-mode').value,
         watchlist,
       }),
     });

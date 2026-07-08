@@ -112,6 +112,21 @@
         </div>
 
         <div class="group">
+          <div class="group-label">Duplicates</div>
+          <div class="group-card">
+            <div class="row">
+              <label class="row-title" for="dedup-mode">Handling</label>
+              <select id="dedup-mode" class="input-compact select-compact" aria-label="Duplicate handling">
+                <option value="pipeline">Before draft</option>
+                <option value="queue">In queue only</option>
+                <option value="off">Off</option>
+              </select>
+            </div>
+            <p id="dedup-mode-desc" class="row-desc block muted-note">Block duplicate stories before drafting (saves API cost).</p>
+          </div>
+        </div>
+
+        <div class="group">
           <div class="group-label">Watchlist</div>
           <div class="group-card">
             <p class="row-desc block">Prioritize news mentioning these tickers</p>
