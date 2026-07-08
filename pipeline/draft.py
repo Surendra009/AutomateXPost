@@ -10,7 +10,7 @@ from logging_config import setup_logging
 from models import Draft, Headline
 from pipeline.ai_news import infer_ai_tickers
 from pipeline.draft_budget import DraftBudget
-from pipeline.dedup import was_recently_drafted
+from pipeline.dedup import mark_story_drafted, should_skip_story
 from pipeline.classify_cache import get_cached_classification
 from pipeline.enrich import get_article_text_for_draft
 from pipeline.feedback import drafter_feedback_hints
@@ -198,6 +198,7 @@ def _commit_draft(
             row.status = "drafted"
             session.add(row)
         session.commit()
+    mark_story_drafted(headline.title)
     return True
 
 
@@ -224,7 +225,7 @@ def draft_posts(
             _discard_headline(headline, "story too old to draft")
             continue
 
-        if was_recently_drafted(headline.title, headline.source):
+        if should_skip_story(headline.title, headline.source):
             _discard_headline(headline, "duplicate story drafted recently")
             logger.debug("Skipping duplicate story: %s", headline.title[:80])
             continue

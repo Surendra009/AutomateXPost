@@ -18,7 +18,10 @@ from pipeline.alerting import check_pipeline_health, send_alert
 from pipeline.analytics import refresh_post_metrics
 from pipeline.company_news import process_company_news
 from pipeline.cycle_context import cycle_max_news_age
+from pipeline.dedup import reset_cycle_dedup
+from pipeline.dedup_mode import dedup_at_queue
 from pipeline.draft import draft_posts
+from pipeline.queue_dedup import dedupe_pending_in_db
 from pipeline.draft_budget import DraftBudget
 from pipeline.earnings import process_earnings
 from pipeline.feedback import feedback_stats
@@ -165,6 +168,7 @@ async def run_pipeline_cycle(*, force: bool = False) -> dict:
                     pass
 
             logger.info("Pipeline cycle starting (%s)", decision.mode)
+            reset_cycle_dedup()
             clear_sec_feed_cache()
             expired = expire_stale_drafts()
             discarded = discard_stale_headlines()
@@ -223,6 +227,11 @@ async def run_pipeline_cycle(*, force: bool = False) -> dict:
 
             if budget.created:
                 notify_new_drafts(budget.created)
+
+            if dedup_at_queue():
+                hidden = dedupe_pending_in_db()
+                if hidden:
+                    logger.info("Pipeline cycle dedup: hid %d duplicate pending drafts", hidden)
 
             check_pipeline_health(budget.created, None)
             refresh_post_metrics()
