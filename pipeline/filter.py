@@ -68,7 +68,14 @@ tradeable=true for category ai when impact is high or med.
 Be strict. When in doubt, relevant=false. JSON array only."""
 
 
-def _call_claude(system: str, user: str, model: str, retry: bool = True, max_tokens: int = 4096) -> str | None:
+def _call_claude(
+    system: str,
+    user: str,
+    model: str,
+    retry: bool = True,
+    max_tokens: int = 4096,
+    temperature: float | None = None,
+) -> str | None:
     if not ANTHROPIC_API_KEY:
         logger.warning("ANTHROPIC_API_KEY not set, skipping filter")
         return None
@@ -76,19 +83,24 @@ def _call_claude(system: str, user: str, model: str, retry: bool = True, max_tok
     import anthropic
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }
+    if temperature is not None:
+        kwargs["temperature"] = temperature
     try:
-        message = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
+        message = client.messages.create(**kwargs)
         return message.content[0].text
     except Exception as e:
         logger.error("Claude API error: %s", redact_secrets(str(e)))
         if retry:
             logger.info("Retrying Claude call once...")
-            return _call_claude(system, user, model, retry=False, max_tokens=max_tokens)
+            return _call_claude(
+                system, user, model, retry=False, max_tokens=max_tokens, temperature=temperature
+            )
         return None
 
 

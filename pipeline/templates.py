@@ -1,4 +1,4 @@
-"""Template-based drafts — zero LLM for structured earnings, macro, and AI launches."""
+"""Template-based drafts — zero LLM for structured earnings and macro."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pipeline.ai_news import (
     is_ai_source,
     is_material_ai_update,
 )
+from pipeline.draft_quality import is_too_generic
 from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts
 from pipeline.enrich import fetch_article_text
 
@@ -64,24 +65,6 @@ MACRO_LABELS = {
     "interest rate decision": "Fed",
 }
 
-MACRO_TAKEAWAY = {
-    "CPI": "Inflation print shifts rate-cut expectations",
-    "PPI": "Producer prices feed into the inflation outlook",
-    "Nonfarm payrolls": "Labor strength affects Fed and rate path",
-    "Jobs report": "Labor strength affects Fed and rate path",
-    "Unemployment": "Labor market signal for the Fed",
-    "GDP": "Growth read shapes recession vs soft-landing odds",
-    "Fed": "Rates path repriced across stocks and bonds",
-}
-
-GEOPOLITICS_SIGNAL = re.compile(
-    r"\b("
-    r"iran|israel|ukraine|russia|strike|missile|war|tanker|oil|crude|hormuz|"
-    r"military|pentagon|troops|navy|drone|sanctions|conflict|attacks"
-    r")\b",
-    re.I,
-)
-
 # Official AI blogs — highest confidence for templates
 AI_BLOG_SOURCES = {
     "OpenAI Blog",
@@ -107,11 +90,10 @@ def try_template_draft(headline: Headline, classification: dict) -> TemplateDraf
     for builder in (
         try_earnings_template,
         try_macro_template,
-        try_geopolitics_template,
         try_ai_launch_template,
     ):
         result = builder(headline, classification)
-        if result:
+        if result and not is_too_generic(result.text, headline.title):
             return result
     return None
 
@@ -129,18 +111,6 @@ def _extract_tickers(headline: Headline, classification: dict) -> list[str]:
     if not tickers:
         tickers = infer_ai_tickers(text)
     return tickers[:3]
-
-
-def _fmt_rev(num: str, suffix: str | None = None) -> str:
-    try:
-        val = float(num)
-    except ValueError:
-        return f"${num}"
-    if suffix:
-        return f"${num}{suffix.upper()}"
-    if val >= 1:
-        return f"${val:.2f}B" if val < 1000 else f"${val/1000:.2f}T"
-    return f"${val:.2f}"
 
 
 def _beat_miss_verb(match: re.Match) -> str:
@@ -176,9 +146,9 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
     if not lines:
         return None
 
-    line1, line2 = lines
+    line1, line2, line3 = lines
     ticker_line = " ".join(f"${t}" for t in tickers)
-    body = f"{line1}\n{line2}\n\n{ticker_line}".strip()
+    body = f"{line1}\n{line2}\n{line3}\n\n{ticker_line}".strip()
     impact = "high" if verb in ("beat", "missed") else "med"
 
     return TemplateDraft(
@@ -202,6 +172,88 @@ def _macro_label(text: str) -> str | None:
     return m.group(1).upper()
 
 
+def _macro_direction(label: str, actual: float, expected: float) -> tuple[str, str]:
+    """Return line2 (surprise frame) and line3 (market implication)."""
+    diff = actual - expected
+    hot = diff > 0.02
+    cool = diff < -0.02
+
+    if label in ("CPI", "PPI"):
+        if hot:
+            return (
+                f"Hotter than expected — bond yields and the dollar tend to firm",
+                "Rate-cut bets get pushed out; growth vs duration trade tilts defensive",
+            )
+        if cool:
+            return (
+                f"Softer than expected — yields often ease on the print",
+                "Bonds catch a bid; rate-sensitive growth can outperform",
+            )
+        return (
+            f"In-line with consensus — the reaction is all about the details",
+            "Headline matched; markets trade the core vs shelter split",
+        )
+
+    if label in ("Nonfarm payrolls", "Jobs report"):
+        if hot:
+            return (
+                f"Stronger labor print — Fed has less room to ease",
+                "Wages and hours matter for the next leg in rates",
+            )
+        if cool:
+            return (
+                f"Weaker jobs data — easing odds tick higher",
+                "Soft landing narrative gets another datapoint",
+            )
+        return (
+            f"Jobs landed near consensus",
+            "Unemployment and wage growth set the Fed read-through",
+        )
+
+    if label == "Unemployment":
+        if hot:
+            return (
+                f"Unemployment rose more than expected",
+                "Labor slack builds — dovish for rates and duration",
+            )
+        if cool:
+            return (
+                f"Tighter labor market than expected",
+                "Sticky jobs keep the Fed cautious on cuts",
+            )
+        return (
+            f"Jobless rate matched expectations",
+            "Participation and wage data drive the bond move",
+        )
+
+    if label == "GDP":
+        if hot:
+            return (
+                f"Growth beat — recession fears ease",
+                "Cyclicals and small caps often lead on a strong GDP surprise",
+            )
+        if cool:
+            return (
+                f"Growth missed — soft-landing trade gets tested",
+                "Defensives and quality factor tend to hold up",
+            )
+        return (
+            f"GDP matched the street",
+            "Composition (consumer vs capex) moves sector leadership",
+        )
+
+    if label == "Fed":
+        return (
+            f"Policy path repriced across front-end yields",
+            "Equities trade the dot plot and Powell tone, not just the headline",
+        )
+
+    return (
+        f"Macro surprise shifts the rates backdrop",
+        "Risk assets reprice the path for cuts and growth",
+    )
+
+
 def try_macro_template(headline: Headline, classification: dict) -> TemplateDraft | None:
     text = f"{headline.title} {headline.summary}"
     label = _macro_label(text)
@@ -212,16 +264,19 @@ def try_macro_template(headline: Headline, classification: dict) -> TemplateDraf
 
     pct_vs = PCT_VS.search(text)
     if pct_vs:
-        line1 = f"{label} came in at {pct_vs.group(1)}% vs {pct_vs.group(2)}% expected"
+        actual = float(pct_vs.group(1))
+        expected = float(pct_vs.group(2))
+        line1 = f"{label} {actual:g}% vs {expected:g}% est"
+        line2, line3 = _macro_direction(label, actual, expected)
     else:
         pct = SINGLE_PCT.search(headline.title)
-        if pct:
-            line1 = f"{label} printed at {pct.group(1)}%"
-        else:
-            line1 = _shorten(headline.title, 72)
+        if not pct:
+            return None
+        line1 = f"{label} printed {pct.group(1)}%"
+        line2 = f"Street will benchmark the reaction in rates and the dollar"
+        line3 = "Watch front-end yields for the first tell"
 
-    line2 = MACRO_TAKEAWAY.get(label, "Macro data moves rates and risk assets")
-    body = f"{line1}\n{line2}\n\n$SPY"
+    body = f"{line1}\n{line2}\n{line3}\n\n$SPY"
     return TemplateDraft(
         text=body,
         format="BREAKING",
@@ -232,62 +287,44 @@ def try_macro_template(headline: Headline, classification: dict) -> TemplateDraf
     )
 
 
-def _shorten(text: str, max_len: int) -> str:
-    text = text.strip()
-    if len(text) <= max_len:
-        return text
-    return text[: max_len - 1].rsplit(" ", 1)[0] + "…"
+_MODEL_HOOK = re.compile(
+    r"\b(GPT[- ]?\d[\w.-]*|Claude [\d.]+|Gemini [\w.]+|Llama [\d.]+|"
+    r"Copilot [\w.]+|Sora|o\d(?:-mini|-pro)?)\b",
+    re.I,
+)
+_SHIPS = re.compile(r"\b(launches?|ships?|releases?|unveils?|introduces?|debuts?)\b", re.I)
+
+
+def _ai_hook(title: str, summary: str) -> str | None:
+    """Build an original hook — never return a truncated headline."""
+    blob = f"{title} {summary}"
+    model = _MODEL_HOOK.search(blob)
+    ships = _SHIPS.search(title)
+    if model and ships:
+        name = model.group(1)
+        return f"New {name} is live — capability jump, not a press-release tweak"
+    if model:
+        return f"{model.group(1)} update drops — compare latency, price, and context window"
+    if re.search(r"\bapi\b|sdk", blob, re.I):
+        return "Fresh API surface for builders — integration speed is the moat"
+    if re.search(r"\bagent|copilot|automation\b", blob, re.I):
+        return "Agents get another production hook — workflow lock-in matters"
+    return None
 
 
 def _ai_takeaway(title: str, summary: str) -> str:
     blob = f"{title} {summary}".lower()
-    if re.search(r"\bapi\b|sdk|developers?", blob):
-        return "Gives builders a new hook into the stack"
-    if re.search(r"\b(model|gpt|claude|gemini|llama)\b", blob):
-        return "Raises the bar in the model race"
-    if re.search(r"\bmobile|app|ios|android\b", blob):
-        return "Puts AI in more users' hands"
-    if re.search(r"\bagent|copilot|automation\b", blob):
-        return "Pushes agents closer to daily workflows"
-    return "Another step in the AI product war"
-
-
-def _geopolitics_takeaway(title: str, summary: str) -> str:
-    blob = f"{title} {summary}".lower()
-    if re.search(r"\b(iran|tanker|hormuz|strike|missile|attacks)\b", blob):
-        return "Oil supply risk rises — energy names reprice quickly"
-    if re.search(r"\b(oil|crude|opec|gas)\b", blob):
-        return "Crude volatility spreads to majors and oil ETFs"
-    return "Geopolitical risk shifts defensive and energy trades"
-
-
-def try_geopolitics_template(headline: Headline, classification: dict) -> TemplateDraft | None:
-    text = f"{headline.title} {headline.summary}"
-    cat = classification.get("category", "other")
-    if cat == "ai":
-        return None
-    if cat not in ("geopolitics", "macro", "other") and not GEOPOLITICS_SIGNAL.search(text):
-        return None
-    if not GEOPOLITICS_SIGNAL.search(text):
-        return None
-
-    tickers = _extract_tickers(headline, classification)
-    if not tickers:
-        return None
-
-    line1 = _shorten(headline.title, 95)
-    line2 = _geopolitics_takeaway(headline.title, headline.summary)
-    line3 = "Watch oil majors and energy ETFs for follow-through"
-    body = f"{line1}\n{line2}\n{line3}\n\n" + " ".join(f"${t}" for t in tickers)
-
-    return TemplateDraft(
-        text=body,
-        format="BREAKING",
-        tickers=tickers,
-        confidence=0.88,
-        category="geopolitics",
-        impact=classification.get("impact", "high"),
-    )
+    if re.search(r"\bopenai\b", blob):
+        return "MSFT/OpenAI ecosystem gets another reason to keep capex flowing"
+    if re.search(r"\bgoogle\b|gemini", blob):
+        return "GOOGL can bundle this into Search, Cloud, and Android"
+    if re.search(r"\banthropic\b|claude", blob):
+        return "Enterprise AI spend shifts toward reliability and safety"
+    if re.search(r"\bmeta\b|llama", blob):
+        return "Open weights pressure closed-model pricing"
+    if re.search(r"\bnvidia\b|cuda", blob):
+        return "More demand for inference and training silicon"
+    return "Sets the bar for what rivals must match this quarter"
 
 
 def try_ai_launch_template(headline: Headline, classification: dict) -> TemplateDraft | None:
@@ -298,18 +335,21 @@ def try_ai_launch_template(headline: Headline, classification: dict) -> Template
     if not is_ai or not is_material_ai_update(text, headline):
         return None
 
-    # Prefer official blogs; others need product signal in title
     if headline.source not in AI_BLOG_SOURCES and not AI_PRODUCT_SIGNALS.search(headline.title):
         return None
 
+    line1 = _ai_hook(headline.title, headline.summary or "")
+    if not line1:
+        return None
+
     tickers = _extract_tickers(headline, classification)
-    line1 = _shorten(headline.title, 72)
-    line2 = _ai_takeaway(headline.title, headline.summary)
+    line2 = _ai_takeaway(headline.title, headline.summary or "")
+    line3 = "Competitors have to respond or concede the narrative"
 
     if tickers:
-        body = f"{line1}\n{line2}\n\n" + " ".join(f"${t}" for t in tickers)
+        body = f"{line1}\n{line2}\n{line3}\n\n" + " ".join(f"${t}" for t in tickers)
     else:
-        body = f"{line1}\n{line2}"
+        body = f"{line1}\n{line2}\n{line3}"
 
     confidence = 0.91 if headline.source in AI_BLOG_SOURCES else 0.85
     return TemplateDraft(

@@ -11,6 +11,7 @@ from logging_config import setup_logging
 from pipeline.draft_budget import DraftBudget
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from pipeline.structured_common import content_hash, save_structured_draft
+from pipeline.templates import _macro_direction
 
 logger = setup_logging()
 
@@ -26,17 +27,6 @@ MACRO_EVENT_LABELS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"retail sales", re.I), "Retail sales"),
     (re.compile(r"initial jobless claims|jobless claims", re.I), "Jobless claims"),
 ]
-
-MACRO_TAKEAWAY = {
-    "CPI": "Inflation print shifts rate-cut expectations",
-    "PPI": "Producer prices feed into the inflation outlook",
-    "Nonfarm payrolls": "Labor strength affects Fed and rate path",
-    "Unemployment": "Labor market signal for the Fed",
-    "GDP": "Growth read shapes recession vs soft-landing odds",
-    "Fed": "Rates path repriced across stocks and bonds",
-    "Retail sales": "Consumer demand signal for growth and rates",
-    "Jobless claims": "Weekly labor pulse for the Fed",
-}
 
 _US_COUNTRIES = {"US", "USA", "UNITED STATES"}
 
@@ -115,9 +105,9 @@ def _build_result(event: dict[str, Any], label: str) -> tuple[str, str, str, str
     title = f"{label} {actual_s} vs {est_s} est ({word})"
     summary = title
 
-    line1 = f"{label} came in at {actual_s} vs {est_s} expected"
-    line2 = MACRO_TAKEAWAY.get(label, "Macro data moves rates and risk assets")
-    draft = f"{line1}\n{line2}\n\n$SPY"
+    line1 = f"{label} {actual_s} vs {est_s} est"
+    line2, line3 = _macro_direction(label, actual_f, estimate_f)
+    draft = f"{line1}\n{line2}\n{line3}\n\n$SPY"
     impact = "high" if word in ("beat", "miss") else "med"
     return title, summary, draft, impact
 
@@ -133,13 +123,15 @@ def _build_preview(event: dict[str, Any], label: str) -> tuple[str, str, str] | 
         line1 = f"{label} release due today"
 
     if est_s:
-        line2 = f"Consensus est {est_s}"
+        line2 = f"Consensus centers on {est_s}"
+        line3 = "Rates and the dollar react in the first minute after the print"
     else:
-        line2 = MACRO_TAKEAWAY.get(label, "Macro data moves rates and risk assets")
+        line2 = "Street positioned for a rates and risk-asset repricing"
+        line3 = "Watch ES and 2-year yields for the first tell"
 
-    title = f"{line1} — {line2}" if est_s else line1
+    title = f"{line1} — est {est_s}" if est_s else line1
     summary = title
-    draft = f"{line1}\n{line2}\n\n$SPY"
+    draft = f"{line1}\n{line2}\n{line3}\n\n$SPY"
     return title, summary, draft
 
 

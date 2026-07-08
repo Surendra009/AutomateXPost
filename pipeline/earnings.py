@@ -21,6 +21,7 @@ from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline
+from pipeline.earnings_parse import EarningsFacts, build_earnings_lines
 from pipeline.watchlist_scope import in_watchlist, normalized_watchlist
 
 logger = setup_logging()
@@ -127,10 +128,10 @@ def _build_preview(event: dict[str, Any]) -> tuple[str, str, str] | None:
         f"Estimate: {est_line}."
     ).strip()
 
-    line1 = f"{symbol} reports {timing} today"
-    if hour_tag:
-        line1 = f"{symbol} reports {hour_tag} today"
-    draft = f"{line1}\n{est_line}\n\n${symbol}"
+    line1 = f"{symbol} reports {hour_tag} today" if hour_tag else f"{symbol} reports {timing} today"
+    line2 = est_line
+    line3 = "The trade is the surprise vs est and what management says on the call"
+    draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
     return title, summary, draft
 
 
@@ -174,25 +175,26 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
     title = f"{symbol} {overall}s {q_label}earnings — {', '.join(headline_bits)} ({hour})"
     summary = title
 
-    # Draft — lead with strongest surprise
-    if eps_word:
-        verb = {"beat": "beat", "miss": "missed", "in-line": "matched"}[eps_word]
-        line1 = f"{symbol} {verb} {q_label}EPS {eps_actual_s} vs {eps_est_s} est"
+    verb = {"beat": "beat", "miss": "missed", "in-line": "matched"}.get(
+        eps_word or rev_word or "in-line", "matched"
+    )
+    facts = EarningsFacts(
+        quarter=f"Q{quarter}" if quarter else None,
+        eps_actual=eps_actual_s,
+        eps_estimate=eps_est_s,
+        revenue_actual=rev_actual_s,
+        revenue_estimate=rev_est_s,
+    )
+    lines = build_earnings_lines(symbol, verb, facts)
+    if lines:
+        line1, line2, line3 = lines
+        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
     else:
-        line1 = f"{symbol} reported {q_label}earnings"
+        line1 = f"{symbol} {verb} {q_label}EPS {eps_actual_s} vs {eps_est_s} est"
+        line2 = f"Revenue {rev_actual_s} vs {rev_est_s} est" if rev_actual_s and rev_est_s else ""
+        line3 = "Print is in — guidance sets the next leg"
+        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}".replace("\n\n\n", "\n\n").strip()
 
-    line2_parts = []
-    if rev_actual_s and rev_est_s and rev_word:
-        line2_parts.append(f"Revenue {rev_actual_s} vs {rev_est_s} est")
-    elif eps_word == "in-line" and rev_actual_s:
-        line2_parts.append(f"Revenue {rev_actual_s}")
-
-    timing_suffix = hour if hour in ("BMO", "AMC", "DMH") else hour
-    line2 = " — ".join(line2_parts) if line2_parts else ""
-    if line2 and timing_suffix:
-        line2 = f"{line2} — {timing_suffix}"
-
-    draft = f"{line1}\n{line2}\n\n${symbol}".replace("\n\n\n", "\n\n").strip()
     impact = "high" if overall in ("beat", "miss") else "med"
     return title, summary, draft, impact
 

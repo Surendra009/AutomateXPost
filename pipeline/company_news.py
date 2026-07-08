@@ -31,7 +31,11 @@ EARNINGS_CONTEXT = re.compile(
     r"\b(eps|earnings|revenue|sales|quarterly results|q[1-4])\b",
     re.I,
 )
-GUIDANCE = re.compile(r"\b(guidance (raised|lowered|cut|hiked)|outlook (raised|lowered|cut))\b", re.I)
+GUIDANCE = re.compile(
+    r"\b(guidance (raised|lowered|cut|hiked|increased|reduced)|"
+    r"outlook (raised|lowered|cut|hiked|increased|reduced))\b",
+    re.I,
+)
 DEAL = re.compile(
     r"\b("
     r"acquires?|acquired|acquiring|acquisition(?:\s+of)?|"
@@ -41,6 +45,11 @@ DEAL = re.compile(
     r")\b",
     re.I,
 )
+DEAL_TARGET = re.compile(
+    r"\b(?:acquires?|acquired|to acquire|buy|bought)\s+(.+?)(?:\s+for\s+\$|\s+in\s+a\s+|\s*$)",
+    re.I,
+)
+DEAL_SIZE = re.compile(r"\$([\d,.]+)\s*([bBmM])?\b")
 _PAREN_TICKER = re.compile(r"\(([A-Z]{1,5})\)")
 
 
@@ -97,30 +106,62 @@ def _build_draft(
                 lines = build_earnings_lines(symbol, verb, facts)
         if not lines:
             return None
-        line1, line2 = lines
+        line1, line2, line3 = lines
         impact = "high" if verb in ("beat", "missed") else "med"
         fmt = "BREAKING"
         confidence = 0.9
         category = "earnings"
+        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
+        return draft, category, impact, fmt, confidence, line1
     elif GUIDANCE.search(text):
-        line1 = f"{symbol} updated guidance"
-        line2 = "Forward outlook reset for the stock"
+        gm = GUIDANCE.search(text)
+        direction = (gm.group(1) or gm.group(2) or "").lower() if gm else ""
+        if direction in ("raised", "hiked", "increased"):
+            line1 = f"{symbol} lifted its forward outlook"
+            line2 = "Street was bracing for a reset — this is the upside case"
+            line3 = "Multiple expansion possible if margins hold on the call"
+        else:
+            line1 = f"{symbol} trimmed its forward outlook"
+            line2 = "Visibility got worse — expect the multiple to compress"
+            line3 = "Catalyst is whether management stabilizes the guide"
         impact = "high"
         fmt = "BREAKING"
         confidence = 0.88
         category = "earnings"
+        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
+        return draft, category, impact, fmt, confidence, line1
     elif DEAL.search(headline):
-        line1 = f"{symbol} M&A headline"
-        line2 = headline[:72] + ("…" if len(headline) > 72 else "")
+        target_m = DEAL_TARGET.search(headline)
+        target = ""
+        if target_m:
+            target = target_m.group(1).strip()
+            target = re.sub(r"\s+for\s*$", "", target, flags=re.I)
+            if len(target) > 40:
+                target = target[:37].rsplit(" ", 1)[0] + "…"
+        size_m = DEAL_SIZE.search(headline)
+        size = ""
+        if size_m:
+            suffix = (size_m.group(2) or "B").upper()
+            size = f"${size_m.group(1)}{suffix}"
+
+        if target and size:
+            line1 = f"{symbol} buying {target} for {size}"
+            line2 = "Balance sheet and synergy math drive the arb"
+        elif target:
+            line1 = f"{symbol} moving on {target}"
+            line2 = "Strategic gap-fill vs building in-house"
+        else:
+            line1 = f"{symbol} in play on a deal headline"
+            line2 = "Terms and financing set the risk/reward"
+        line3 = "Integration risk is the trade until the proxy drops"
         impact = "high"
         fmt = "BREAKING"
         confidence = 0.86
         category = "regulatory"
+        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
+        return draft, category, impact, fmt, confidence, line1
     else:
         return None
-
-    draft = f"{line1}\n{line2}\n\n${symbol}"
-    return draft, category, impact, fmt, confidence, line1
 
 
 def process_company_news(budget: DraftBudget | None = None) -> tuple[int, int]:
