@@ -11,6 +11,7 @@ from database import get_session
 from models import Draft, Headline
 from pipeline.dedup import story_has_active_draft, title_recently_ingested, was_recently_drafted
 from pipeline.draft_budget import DraftBudget
+from pipeline.post_format import dedupe_tickers, normalize_post_text, parse_ticker_field
 from pipeline.story_key import title_fingerprint
 
 
@@ -56,6 +57,10 @@ def save_structured_draft(
     if headline_exists(chash) or headline_exists_by_title(title):
         return False
 
+    ticker_list = parse_ticker_field(tickers)
+    draft_text = normalize_post_text(draft_text, ticker_list)
+    tickers_csv = ",".join(ticker_list)
+
     now = published_at or datetime.utcnow()
     with get_session() as session:
         headline = Headline(
@@ -77,7 +82,7 @@ def save_structured_draft(
             format=fmt,
             impact=impact,
             category=category,
-            tickers=tickers,
+            tickers=tickers_csv,
             confidence=confidence,
             status="pending",
             created_at=datetime.utcnow(),

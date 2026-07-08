@@ -16,6 +16,7 @@ from pipeline.enrich import get_article_text_for_draft
 from pipeline.feedback import drafter_feedback_hints
 from pipeline.filter import _call_claude, _parse_json_array
 from pipeline.freshness import is_fresh
+from pipeline.post_format import dedupe_tickers, normalize_post_text
 from pipeline.templates import try_template_draft
 
 logger = setup_logging()
@@ -124,46 +125,16 @@ def _parse_draft_response(raw: str) -> dict | None:
 
 
 def _resolve_tickers(draft_data: dict, classification: dict, headline: Headline) -> list[str]:
-    tickers = [t.upper() for t in draft_data.get("tickers") or classification.get("tickers") or []]
+    tickers = dedupe_tickers(
+        draft_data.get("tickers") or classification.get("tickers") or []
+    )
     if not tickers:
         tickers = infer_ai_tickers(f"{headline.title} {headline.summary}")
-    return tickers
-
-
-def _is_cashtag_line(ln: str) -> bool:
-    tokens = ln.strip().split()
-    return bool(tokens) and all(re.fullmatch(r"\$[A-Z]{1,5}", t) for t in tokens)
+    return dedupe_tickers(tickers)
 
 
 def _normalize_post(text: str, tickers: list[str]) -> str:
-    """Clean up line breaks and ensure tickers on final line."""
-    text = text.replace("\\n", "\n").strip()
-    lines = [ln.strip() for ln in text.split("\n")]
-
-    cleaned: list[str] = []
-    for ln in lines:
-        if not ln:
-            if cleaned and cleaned[-1] != "":
-                cleaned.append("")
-            continue
-        cleaned.append(ln)
-
-    body_lines = []
-    for ln in cleaned:
-        if _is_cashtag_line(ln):
-            continue
-        body_lines.append(ln)
-
-    while body_lines and body_lines[-1] == "":
-        body_lines.pop()
-
-    if tickers:
-        ticker_line = " ".join(f"${t.upper()}" for t in tickers)
-        if not body_lines or body_lines[-1] != ticker_line:
-            body_lines.append("")
-            body_lines.append(ticker_line)
-
-    return "\n".join(body_lines).strip()
+    return normalize_post_text(text, dedupe_tickers(tickers))
 
 
 def _commit_draft(
@@ -187,7 +158,7 @@ def _commit_draft(
             format=fmt,
             impact=impact or classification.get("impact", "med"),
             category=category or classification.get("category", "other"),
-            tickers=",".join(tickers) if tickers else "",
+            tickers=",".join(dedupe_tickers(tickers)) if tickers else "",
             confidence=confidence,
             status="pending",
             created_at=datetime.utcnow(),
@@ -399,7 +370,7 @@ def regenerate_draft(draft_id: int) -> Draft | None:
             return None
         row.text = text
         row.format = fmt
-        row.tickers = ",".join(tickers) if tickers else row.tickers
+        row.tickers = ",".join(dedupe_tickers(tickers)) if tickers else row.tickers
         row.confidence = float(draft_data.get("confidence", row.confidence))
         row.post_error = None
         session.add(row)

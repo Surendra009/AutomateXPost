@@ -21,6 +21,7 @@ from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline
+from pipeline.post_format import normalize_post_text
 from pipeline.watchlist_scope import in_watchlist, normalized_watchlist
 
 logger = setup_logging()
@@ -300,7 +301,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
 
                 draft = Draft(
                     headline_id=headline.id,
-                    text=draft_text,
+                    text=normalize_post_text(draft_text, symbol),
                     format="BREAKING",
                     impact=impact,
                     category="earnings",
@@ -350,7 +351,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
 
             draft = Draft(
                 headline_id=headline.id,
-                text=draft_text,
+                text=normalize_post_text(draft_text, symbol),
                 format="CONTEXT",
                 impact="med",
                 category="earnings",
