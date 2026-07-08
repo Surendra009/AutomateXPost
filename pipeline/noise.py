@@ -20,6 +20,20 @@ NOISE_PATTERNS = re.compile(
     re.I,
 )
 
+# Investing listicles / roundups — not tradeable news
+LISTICLE_PATTERNS = re.compile(
+    r"\b("
+    r"best .{0,40}(stocks?|buys?|picks?|etfs?|investments?)|"
+    r"stocks? to (?:buy|watch|own|hold)|"
+    r"top \d+ .{0,30}(stocks?|picks?)|"
+    r"\d+ (?:best|top|great|cheap) .{0,30}(stocks?|picks?|buys?)|"
+    r"dirt[- ]cheap|undervalued stocks?|"
+    r"dividend stocks? to|growth stocks? to|cheap stocks? to|"
+    r"must[- ]buy stocks?|stocks? (?:you should|to) buy"
+    r")\b",
+    re.I,
+)
+
 # Must hit at least one trade signal for med-priority sources
 TRADE_SIGNALS = re.compile(
     r"\b("
@@ -38,18 +52,29 @@ TRADE_SIGNALS = re.compile(
 SOFT_SOURCES = {"Finnhub", "TechCrunch", "The Verge AI"}
 
 
+def is_title_noise(title: str) -> str | None:
+    """Title-only noise check (structured feeds without a Headline row)."""
+    if not title.strip():
+        return "empty"
+    if LISTICLE_PATTERNS.search(title):
+        return "listicle/roundup title"
+    if NOISE_PATTERNS.search(title):
+        return "noise pattern in title"
+    learned = is_learned_noise(title)
+    if learned:
+        return learned
+    return None
+
+
 def is_obvious_noise(headline: Headline) -> str | None:
     """Return discard reason if headline is obvious noise, else None."""
     text = f"{headline.title} {headline.summary}".strip()
     if not text:
         return "empty"
 
-    if NOISE_PATTERNS.search(headline.title):
-        return "noise pattern in title"
-
-    learned = is_learned_noise(headline.title)
-    if learned:
-        return learned
+    title_noise = is_title_noise(headline.title)
+    if title_noise:
+        return title_noise
 
     if is_generic_wire_noise(headline):
         return "generic wire headline"

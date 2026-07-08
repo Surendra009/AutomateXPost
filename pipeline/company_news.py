@@ -12,6 +12,8 @@ from logging_config import setup_logging
 from pipeline.draft_budget import DraftBudget
 from pipeline.earnings import DEFAULT_EARNINGS_SYMBOLS
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key, parse_finnhub_timestamp
+from pipeline.freshness import is_fresh
+from pipeline.noise import is_title_noise
 from pipeline.structured_common import content_hash, save_structured_draft
 
 logger = setup_logging()
@@ -28,7 +30,16 @@ EARNINGS_CONTEXT = re.compile(
     re.I,
 )
 GUIDANCE = re.compile(r"\b(guidance (raised|lowered|cut|hiked)|outlook (raised|lowered|cut))\b", re.I)
-DEAL = re.compile(r"\b(acquires?|acquisition|merger|to buy|deal to)\b", re.I)
+DEAL = re.compile(
+    r"\b("
+    r"acquires?|acquired|acquiring|acquisition(?:\s+of)?|"
+    r"merger(?:\s+with)?|merges?\s+with|merged\s+with|"
+    r"agrees?\s+to\s+buy|to\s+acquire|deal\s+to\s+acquire|"
+    r"takeover|buyout|bought\s+out"
+    r")\b",
+    re.I,
+)
+_PAREN_TICKER = re.compile(r"\(([A-Z]{1,5})\)")
 
 
 def _in_scope(symbol: str, watchlist: list[str]) -> bool:
@@ -47,6 +58,19 @@ def _fetch_company_news(symbol: str, from_date: str, to_date: str) -> list[dict[
         logger.warning("Finnhub company news %s: %s", symbol, err)
         return []
     return data if isinstance(data, list) else []
+
+
+def _parenthetical_ticker(headline: str) -> str | None:
+    match = _PAREN_TICKER.search(headline)
+    return match.group(1) if match else None
+
+
+def _ticker_matches_headline(ticker: str, headline: str) -> bool:
+    """Reject when the headline's subject ticker differs (e.g. MSFT piece tagged NVDA)."""
+    subject = _parenthetical_ticker(headline)
+    if subject and subject != ticker.upper():
+        return False
+    return True
 
 
 def _beat_miss_word(match: re.Match) -> str:
@@ -136,6 +160,13 @@ def process_company_news(budget: DraftBudget | None = None) -> tuple[int, int]:
             if not headline or not url:
                 continue
 
+            published_at = parse_finnhub_timestamp(item.get("datetime"))
+            if not is_fresh(published_at):
+                continue
+
+            if is_title_noise(headline):
+                continue
+
             # Prefer explicit related ticker from API; fall back to query symbol
             related = (item.get("related") or "").strip().upper()
             ticker = symbol
@@ -143,6 +174,9 @@ def process_company_news(budget: DraftBudget | None = None) -> tuple[int, int]:
                 first = related.split(",")[0].strip()
                 if first and re.fullmatch(r"[A-Z]{1,5}", first):
                     ticker = first
+
+            if not _ticker_matches_headline(ticker, headline):
+                continue
 
             built = _build_draft(ticker, headline, summary)
             if not built:
@@ -163,7 +197,7 @@ def process_company_news(budget: DraftBudget | None = None) -> tuple[int, int]:
                 fmt=fmt,
                 confidence=confidence,
                 chash=chash,
-                published_at=parse_finnhub_timestamp(item.get("datetime")),
+                published_at=published_at,
                 budget=budget,
             ):
                 ingested += 1
