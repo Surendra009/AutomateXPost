@@ -21,6 +21,7 @@ from pipeline.cycle_context import cycle_max_news_age
 from pipeline.draft import draft_posts
 from pipeline.draft_budget import DraftBudget
 from pipeline.earnings import process_earnings
+from pipeline.earnings_parse import reset_earnings_highlight_budget
 from pipeline.feedback import feedback_stats
 from pipeline.filter import filter_headlines
 from pipeline.freshness import discard_stale_headlines
@@ -171,6 +172,7 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                     pass
 
             logger.info("Pipeline cycle starting (%s)", decision.mode)
+            reset_earnings_highlight_budget()
             clear_sec_feed_cache()
             expired = expire_stale_drafts()
             discarded = discard_stale_headlines()

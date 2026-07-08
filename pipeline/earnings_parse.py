@@ -1,13 +1,18 @@
-"""Extract EPS/revenue figures from earnings headlines and summaries."""
+"""Extract EPS/revenue figures and commentary highlights from earnings text."""
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+from config import ANTHROPIC_API_KEY, FILTER_MODEL
+from logging_config import setup_logging
+
+logger = setup_logging()
 
 QUARTER = re.compile(r"\b(q[1-4])\b", re.I)
 
-# actual vs estimate — many wire phrasings
 _EPS_VS_PATTERNS = (
     re.compile(
         r"eps\s+(?:of\s+)?\$?([\d.]+).*?(?:vs\.?|versus|compared to|against|est\.?|expected|consensus|estimate)\s*\$?([\d.]+)",
@@ -57,6 +62,64 @@ _YOY_PCT = re.compile(
     re.I,
 )
 
+_EARNINGS_NEWS = re.compile(
+    r"\b(eps|earnings|revenue|sales|quarterly results|guidance|outlook)\b",
+    re.I,
+)
+
+_SEGMENT_GROWTH = re.compile(
+    r"\b(data[- ]?center|cloud|AI|artificial intelligence|services|iPhone|iPad|"
+    r"advertising|subscriptions|automotive|gaming|infrastructure|hyperscaler|"
+    r"Azure|AWS|Copilot|GPU|chips?|iPhone|Mac|Windows|Search)\b[^.]{0,80}?"
+    r"(?:up|rose|grew|surged|jumped|climbed|increased|fell|declined|slipped)\s+"
+    r"(?:by\s+)?(\d+\.?\d*)%",
+    re.I,
+)
+
+_GUIDANCE_CHANGE = re.compile(
+    r"\b(guidance|outlook|forecast)\b[^.]{0,100}?"
+    r"\b(raised|lowered|cut|hiked|increased|reduced|tightened|maintained|reaffirmed|"
+    r"below|above|surpassed|missed)\b",
+    re.I,
+)
+
+_MARGIN_MOVE = re.compile(
+    r"\b(gross|operating|net)\s+margins?\b[^.]{0,50}?"
+    r"\b(expanded|widened|improved|contracted|compressed|fell|declined|narrowed)\b",
+    re.I,
+)
+
+_DEMAND_SIGNAL = re.compile(
+    r"\b(demand|orders|bookings|backlog|pipeline)\b[^.]{0,60}?"
+    r"\b(strong|weak|robust|soft|record|solid|muted)\b",
+    re.I,
+)
+
+_BEAT_DRIVER = re.compile(
+    r"\b(?:beat|topped|exceeded|surpassed|missed|fell short)\b[^.]{0,40}?"
+    r"(?:on|driven by|thanks to|as|amid|due to)\s+(.+?)(?:\.|,|;|$)",
+    re.I,
+)
+
+_QUOTE_CLAUSE = re.compile(
+    r"\b(?:CEO|CFO|executive|management|company)\b[^.]{0,30}?"
+    r"(?:said|says|expects|forecast|sees|cited|noted)\b[^.]{0,120}\.",
+    re.I,
+)
+
+_HIGHLIGHT_SKIP = re.compile(
+    r"\b(eps|revenue|per share|consensus|estimate|expected|vs\.?|versus)\b",
+    re.I,
+)
+
+_LLM_HIGHLIGHTS_PER_CYCLE = 3
+_llm_highlight_calls = 0
+
+
+def reset_earnings_highlight_budget() -> None:
+    global _llm_highlight_calls
+    _llm_highlight_calls = 0
+
 
 @dataclass
 class EarningsFacts:
@@ -75,12 +138,6 @@ class EarningsFacts:
         if self.revenue_actual and self.revenue_estimate:
             return True
         return bool(self.yoy_pct and (self.eps_actual or self.revenue_actual))
-
-    def has_comparison(self) -> bool:
-        return bool(
-            (self.eps_actual and self.eps_estimate)
-            or (self.revenue_actual and self.revenue_estimate)
-        )
 
 
 def _fmt_money(num: str, suffix: str | None = None) -> str:
@@ -112,6 +169,168 @@ def _eps_surprise_pct(actual: str, estimate: str) -> float | None:
         return (a - e) / abs(e) * 100
     except ValueError:
         return None
+
+
+def _trim_highlight(text: str, max_len: int = 95) -> str:
+    text = re.sub(r"\s+", " ", text).strip(" \"'")
+    if len(text) <= max_len:
+        return text
+    cut = text[: max_len - 1].rsplit(" ", 1)[0]
+    return cut + "…"
+
+
+def _sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    return [p.strip() for p in parts if len(p.strip()) > 25]
+
+
+def _sentence_highlight_score(sentence: str) -> int:
+    score = 0
+    lower = sentence.lower()
+    if _HIGHLIGHT_SKIP.search(sentence) and not (
+        _SEGMENT_GROWTH.search(sentence) or _GUIDANCE_CHANGE.search(sentence)
+    ):
+        score -= 20
+    if _SEGMENT_GROWTH.search(sentence):
+        score += 40
+    if _GUIDANCE_CHANGE.search(sentence):
+        score += 45
+    if _MARGIN_MOVE.search(sentence):
+        score += 35
+    if _DEMAND_SIGNAL.search(sentence):
+        score += 30
+    if _QUOTE_CLAUSE.search(sentence):
+        score += 25
+    for word in ("cloud", "data center", "ai", "guidance", "margin", "outlook", "demand"):
+        if word in lower:
+            score += 8
+    if re.search(r"\d+\.?\d*%", sentence):
+        score += 5
+    return score
+
+
+def extract_earnings_highlight(text: str) -> str | None:
+    """Pull a commentary line — segment, guidance, margins, demand, or management angle."""
+    if not text or len(text.strip()) < 25:
+        return None
+
+    blob = re.sub(r"\s+", " ", text).strip()
+    candidates: list[tuple[int, str]] = []
+
+    seg = _SEGMENT_GROWTH.search(blob)
+    if seg:
+        segment = seg.group(1).strip()
+        pct = seg.group(2)
+        candidates.append((92, f"{segment} revenue up {pct}% — stood out in the quarter"))
+
+    guide = _GUIDANCE_CHANGE.search(blob)
+    if guide:
+        phrase = guide.group(0).strip()
+        candidates.append((90, _trim_highlight(phrase.capitalize())))
+
+    margin = _MARGIN_MOVE.search(blob)
+    if margin:
+        candidates.append((85, _trim_highlight(margin.group(0).capitalize())))
+
+    demand = _DEMAND_SIGNAL.search(blob)
+    if demand:
+        candidates.append((80, _trim_highlight(demand.group(0).capitalize())))
+
+    driver = _BEAT_DRIVER.search(blob)
+    if driver:
+        reason = driver.group(1).strip()
+        if len(reason) > 12:
+            candidates.append((78, _trim_highlight(f"Beat driven by {reason}")))
+
+    quote = _QUOTE_CLAUSE.search(blob)
+    if quote:
+        q = quote.group(0).strip()
+        q = re.sub(r"^(CEO|CFO|executive|management|company)\s+", "", q, flags=re.I)
+        candidates.append((75, _trim_highlight(q)))
+
+    for sentence in _sentences(blob):
+        score = _sentence_highlight_score(sentence)
+        if score >= 30:
+            candidates.append((score, _trim_highlight(sentence)))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def llm_earnings_highlight(source_text: str, ticker: str) -> str | None:
+    """One cheap Haiku line when regex can't find commentary in a long article."""
+    global _llm_highlight_calls
+    if not ANTHROPIC_API_KEY or len(source_text) < 250:
+        return None
+    if _llm_highlight_calls >= _LLM_HIGHLIGHTS_PER_CYCLE:
+        return None
+
+    from pipeline.filter import _call_claude
+
+    prompt = (
+        f"Ticker: {ticker}\n"
+        f"Text:\n{source_text[:2200]}\n\n"
+        "Write ONE earnings commentary line (max 90 chars) about segment strength, "
+        "guidance, margins, demand, or management outlook. "
+        "Do not repeat EPS/revenue headline numbers. Plain text only."
+    )
+    system = "You extract one sharp earnings highlight for a stock post."
+    raw = _call_claude(system, prompt, FILTER_MODEL, max_tokens=80, retry=False)
+    _llm_highlight_calls += 1
+    if not raw:
+        return None
+    line = raw.strip().strip('"').split("\n")[0].strip()
+    if len(line) < 15:
+        return None
+    return _trim_highlight(line)
+
+
+def resolve_earnings_highlight(
+    source_text: str,
+    ticker: str,
+    *,
+    article_text: str = "",
+    allow_llm: bool = True,
+) -> str | None:
+    combined = " ".join(part for part in (source_text, article_text) if part).strip()
+    highlight = extract_earnings_highlight(combined)
+    if highlight:
+        return highlight
+    if allow_llm and article_text:
+        return llm_earnings_highlight(combined, ticker)
+    return extract_earnings_highlight(article_text) if article_text else None
+
+
+def fetch_earnings_news_context(symbol: str, days_back: int = 2) -> str:
+    """Latest Finnhub company-news blurb for earnings commentary."""
+    from pipeline.finnhub_api import finnhub_get, get_finnhub_key
+
+    if not get_finnhub_key():
+        return ""
+
+    today = datetime.utcnow().date()
+    from_date = (today - timedelta(days=days_back)).isoformat()
+    to_date = today.isoformat()
+    data, err = finnhub_get(
+        "company-news",
+        {"symbol": symbol.upper(), "from": from_date, "to": to_date},
+    )
+    if err or not isinstance(data, list):
+        return ""
+
+    chunks: list[str] = []
+    for item in data[:15]:
+        headline = (item.get("headline") or "").strip()
+        summary = (item.get("summary") or "").strip()
+        if not headline:
+            continue
+        text = f"{headline} {summary}"
+        if _EARNINGS_NEWS.search(text):
+            chunks.append(text)
+    return " ".join(chunks)[:3000]
 
 
 def extract_earnings_facts(text: str) -> EarningsFacts:
@@ -151,52 +370,74 @@ def extract_earnings_facts(text: str) -> EarningsFacts:
     return facts
 
 
+def build_earnings_line3(ticker: str, verb: str, facts: EarningsFacts) -> str:
+    if verb == "beat":
+        if facts.eps_actual and facts.eps_estimate:
+            surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
+            if surprise is not None and surprise >= 8:
+                return f"Big EPS beat — {ticker} likely gaps up unless guidance disappoints"
+        return f"Beat leans bullish into the call; guidance sets the real move"
+    if verb == "missed":
+        return f"Miss opens a gap-down risk — watch for guide cuts on the call"
+    return f"Print is in — segment mix and outlook drive the next leg"
+
+
 def build_earnings_lines(
     ticker: str,
     verb: str,
     facts: EarningsFacts,
-) -> tuple[str, str] | None:
-    """Build hook + detail lines. None when there are no concrete figures."""
+    *,
+    source_text: str = "",
+    article_text: str = "",
+    allow_llm: bool = True,
+) -> tuple[str, str, str] | None:
+    """Hook (numbers) + commentary highlight + trade implication."""
     if not facts.has_numbers():
         return None
 
     q = f"{facts.quarter} " if facts.quarter else ""
 
     if facts.eps_actual and facts.eps_estimate:
-        line1 = f"{ticker} {verb} {q}EPS {facts.eps_actual} vs {facts.eps_estimate} est"
+        surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
+        if surprise is not None and abs(surprise) >= 1:
+            direction = "above" if surprise >= 0 else "below"
+            line1 = (
+                f"{ticker} {verb} {q}EPS {facts.eps_actual} — "
+                f"{abs(surprise):.0f}% {direction} consensus"
+            )
+        else:
+            line1 = f"{ticker} {verb} {q}EPS {facts.eps_actual} vs {facts.eps_estimate} est"
     elif facts.eps_actual:
-        line1 = f"{ticker} reported {q}EPS {facts.eps_actual}"
+        line1 = f"{ticker} posted {q}EPS {facts.eps_actual}"
     elif facts.revenue_actual and facts.revenue_estimate:
-        line1 = f"{ticker} {verb} {q}revenue — {facts.revenue_actual} vs {facts.revenue_estimate} est"
+        line1 = f"{ticker} {verb} {q}revenue {facts.revenue_actual} vs {facts.revenue_estimate} est"
     elif facts.revenue_actual:
-        line1 = f"{ticker} reported {q}revenue {facts.revenue_actual}"
+        line1 = f"{ticker} posted {q}revenue {facts.revenue_actual}"
     else:
         return None
 
-    line2_parts: list[str] = []
-    if facts.revenue_actual and facts.revenue_estimate and facts.eps_actual:
-        line2_parts.append(f"Revenue {facts.revenue_actual} vs {facts.revenue_estimate} est")
+    highlight = resolve_earnings_highlight(
+        source_text,
+        ticker,
+        article_text=article_text,
+        allow_llm=allow_llm,
+    )
+
+    if highlight:
+        line2 = highlight
     elif facts.revenue_actual and facts.revenue_estimate:
-        line2_parts.append(f"Sales {facts.revenue_actual} vs {facts.revenue_estimate} est")
-    elif facts.revenue_actual and not facts.eps_estimate:
-        line2_parts.append(f"Revenue came in at {facts.revenue_actual}")
-    elif facts.yoy_pct and facts.revenue_actual:
-        line2_parts.append(f"Revenue {facts.revenue_actual}, up {facts.yoy_pct}% year over year")
+        line2 = f"Revenue {facts.revenue_actual} vs {facts.revenue_estimate} est"
     elif facts.yoy_pct:
-        line2_parts.append(f"Up {facts.yoy_pct}% year over year")
+        line2 = f"Revenue growth ran +{facts.yoy_pct}% year over year"
     elif facts.eps_actual and facts.eps_estimate:
         surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
         if surprise is not None:
-            word = "above" if surprise >= 0 else "below"
-            line2_parts.append(f"{abs(surprise):.0f}% {word} the EPS estimate")
-    elif verb == "beat":
-        line2_parts.append("Beat on the headline number — watch guidance on the call")
-    elif verb == "missed":
-        line2_parts.append("Miss likely pressures the stock near term")
+            word = "cleared" if surprise >= 0 else "missed"
+            line2 = f"EPS {word} the street by {abs(surprise):.0f}%"
+        else:
+            line2 = f"Headline numbers vs the street — details on the call"
     else:
-        line2_parts.append("Results roughly in line with the street")
+        line2 = f"Segment commentary and guide will frame the trade"
 
-    line2 = line2_parts[0] if line2_parts else ""
-    if not line2:
-        return None
-    return line1, line2
+    line3 = build_earnings_line3(ticker, verb, facts)
+    return line1, line2, line3

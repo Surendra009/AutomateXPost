@@ -167,18 +167,24 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
     verb = _beat_miss_verb(bm)
     ticker = tickers[0]
     facts = extract_earnings_facts(text)
-    lines = build_earnings_lines(ticker, verb, facts)
-    if not lines and headline.url:
-        article = fetch_article_text(headline.url)
+    article = ""
+    if headline.url:
+        article = fetch_article_text(headline.url) or ""
         if article:
-            facts = extract_earnings_facts(f"{text} {article[:2500]}")
-            lines = build_earnings_lines(ticker, verb, facts)
+            facts = extract_earnings_facts(f"{text} {article[:3000]}")
+    lines = build_earnings_lines(
+        ticker,
+        verb,
+        facts,
+        source_text=text,
+        article_text=article,
+    )
     if not lines:
         return None
 
-    line1, line2 = lines
+    line1, line2, line3 = lines
     ticker_line = " ".join(f"${t}" for t in tickers)
-    body = f"{line1}\n{line2}\n\n{ticker_line}".strip()
+    body = f"{line1}\n{line2}\n{line3}\n\n{ticker_line}".strip()
     impact = "high" if verb in ("beat", "missed") else "med"
 
     return TemplateDraft(
