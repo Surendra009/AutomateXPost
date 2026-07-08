@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -22,9 +23,16 @@ async def lifespan(app: FastAPI):
     init_db()
     if os.getenv("SEED_ON_START", "false").lower() in ("1", "true", "yes"):
         seed()
-    start_pipeline(PIPELINE_INTERVAL_SECONDS)
+
+    async def _deferred_pipeline_start() -> None:
+        # Let /health respond before the first ingest cycle (Railway healthcheck).
+        await asyncio.sleep(12)
+        start_pipeline(PIPELINE_INTERVAL_SECONDS)
+
+    pipeline_boot = asyncio.create_task(_deferred_pipeline_start())
     logger.info("PostPilot started (dry_run=%s)", get_settings()["dry_run"])
     yield
+    pipeline_boot.cancel()
     stop_pipeline()
     logger.info("PostPilot stopped")
 

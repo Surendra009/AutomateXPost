@@ -90,9 +90,10 @@ def validate_security_config(
         )
 
     if problems:
-        raise RuntimeError(
-            "PostPilot security check failed:\n- " + "\n- ".join(problems)
-        )
+        msg = "PostPilot security check failed:\n- " + "\n- ".join(problems)
+        import logging
+        logging.getLogger("postpilot").error(msg)
+        raise RuntimeError(msg)
 
 
 def safe_compare_password(plain: str, expected: str) -> bool:

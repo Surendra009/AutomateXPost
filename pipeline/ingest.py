@@ -239,10 +239,10 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
         session.commit()
 
     if skipped_stale:
-        logger.info("Skipped stale headlines (>%dh): %s", MAX_NEWS_AGE_HOURS, skipped_stale)
+        logger.info("Skipped stale headlines (>%dh): %s", MAX_NEWS_AGE_HOURS, str(skipped_stale))
     if skipped_dup:
-        logger.info("Skipped cross-source duplicates: %s", skipped_dup)
-    logger.info("Ingested %d new headlines: %s", new_count, per_source)
+        logger.info("Skipped cross-source duplicates: %s", str(skipped_dup))
+    logger.info("Ingested %d new headlines: %s", new_count, str(per_source))
     return new_count, per_source
 
 
