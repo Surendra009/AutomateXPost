@@ -396,6 +396,7 @@ function renderFinnhubStatus(fh) {
   };
   rows.push(fmt('News', fh.news));
   rows.push(fmt('Earnings', fh.earnings));
+  rows.push(fmt('Macro calendar', fh.macro));
   rows.push(fmt('Company news', fh.company_news));
   if (fh.error) {
     rows.push(`<div class="pipeline-error">${esc(fh.error)}</div>`);
@@ -450,8 +451,23 @@ async function loadSettings() {
       </div>`).join('');
 
     const lastRun = pipe.last_run_at ? formatDate(pipe.last_run_at) : 'Never';
+    const sched = pipe.schedule || {};
+    let schedLabel;
+    if (sched.quiet_hours) {
+      schedLabel = `Quiet (${sched.quiet_window || '10pm–5am'})`;
+    } else if (sched.is_weekend) {
+      schedLabel = `Weekend (every ${sched.weekend_interval_hours || 3}h)`;
+    } else if (sched.next_mode === 'catchup') {
+      schedLabel = 'Catch-up at 5am';
+    } else {
+      schedLabel = 'Active (6am–10pm)';
+    }
     const err = pipe.last_error ? `<div class="pipeline-error">${esc(pipe.last_error)}</div>` : '';
     document.getElementById('pipeline-status').innerHTML = `
+      <div class="status-row">
+        <span>Schedule</span>
+        <span>${esc(schedLabel)}${sched.timezone ? ` · ${esc(sched.timezone)}` : ''}</span>
+      </div>
       <div class="status-row">
         <span>Last fetch</span>
         <span>${esc(lastRun)}</span>
@@ -466,6 +482,7 @@ async function loadSettings() {
         <span>${pipe.last_drafts_created ?? 0}</span>
       </div>
       ${pipe.last_expired ? `<div class="status-row"><span>Expired stale</span><span>${pipe.last_expired}</span></div>` : ''}
+      ${(pipe.feedback?.learned_patterns ?? 0) > 0 ? `<div class="status-row"><span>Learned noise</span><span>${pipe.feedback.learned_patterns} patterns</span></div>` : ''}
       ${err}`;
 
     renderFinnhubStatus(pipe.finnhub || data.finnhub);

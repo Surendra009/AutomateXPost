@@ -9,10 +9,12 @@ from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
 from pipeline.ai_news import infer_ai_tickers
+from pipeline.draft_budget import DraftBudget
 from pipeline.dedup import was_recently_drafted
 from pipeline.enrich import get_article_text_for_draft
 from pipeline.filter import _call_claude, _parse_json_array
 from pipeline.freshness import is_fresh
+from pipeline.templates import try_template_draft
 
 logger = setup_logging()
 
@@ -136,13 +138,57 @@ def _normalize_post(text: str, tickers: list[str]) -> str:
     return "\n".join(body_lines).strip()
 
 
-def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
+def _commit_draft(
+    headline: Headline,
+    classification: dict,
+    *,
+    text: str,
+    fmt: str,
+    tickers: list[str],
+    confidence: float,
+    impact: str | None = None,
+    category: str | None = None,
+) -> bool:
+    if not text or not _passes_style_check(text, fmt):
+        return False
+
+    with get_session() as session:
+        draft = Draft(
+            headline_id=headline.id,
+            text=text,
+            format=fmt,
+            impact=impact or classification.get("impact", "med"),
+            category=category or classification.get("category", "other"),
+            tickers=",".join(tickers) if tickers else "",
+            confidence=confidence,
+            status="pending",
+            created_at=datetime.utcnow(),
+        )
+        session.add(draft)
+        row = session.get(Headline, headline.id)
+        if row:
+            row.status = "drafted"
+            session.add(row)
+        session.commit()
+    return True
+
+
+def draft_posts(
+    filtered: list[tuple[Headline, dict]],
+    budget: DraftBudget | None = None,
+) -> int:
     if not filtered:
         return 0
 
+    cap = budget.remaining if budget else MAX_DRAFTS_PER_CYCLE
     created = 0
+    template_count = 0
     for headline, classification in filtered:
-        if created >= MAX_DRAFTS_PER_CYCLE:
+        if budget is not None:
+            if budget.remaining <= 0:
+                logger.info("Draft cap reached (%d/cycle)", budget.limit)
+                break
+        elif created >= cap:
             logger.info("Draft cap reached (%d/cycle)", MAX_DRAFTS_PER_CYCLE)
             break
 
@@ -155,6 +201,30 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
             logger.debug("Skipping duplicate story: %s", headline.title[:80])
             continue
 
+        template = try_template_draft(headline, classification)
+        if template:
+            tickers = template.tickers
+            text = _normalize_post(template.text, tickers)
+            if _commit_draft(
+                headline,
+                classification,
+                text=text,
+                fmt=template.format,
+                tickers=tickers,
+                confidence=template.confidence,
+                impact=template.impact,
+                category=template.category,
+            ):
+                if budget:
+                    budget.try_take(1)
+                created += 1
+                template_count += 1
+                logger.debug("Template draft (%s): %s", template.category, headline.title[:60])
+            else:
+                logger.info("Template style check failed for headline %s", headline.id)
+                _discard_headline(headline, "template style check failed")
+            continue
+
         article_text = get_article_text_for_draft(headline, classification)
         prompt = _build_draft_prompt(headline, classification, article_text)
         raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=600)
@@ -165,6 +235,7 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
         draft_data = _parse_draft_response(raw)
         if not draft_data:
             logger.warning("Unparseable draft JSON for headline %s", headline.id)
+            _discard_headline(headline, "unparseable draft JSON")
             continue
 
         if draft_data.get("skip"):
@@ -184,27 +255,25 @@ def draft_posts(filtered: list[tuple[Headline, dict]]) -> int:
             _discard_headline(headline, "headline echo")
             continue
 
-        with get_session() as session:
-            draft = Draft(
-                headline_id=headline.id,
-                text=text,
-                format=fmt,
-                impact=classification.get("impact", "med"),
-                category=classification.get("category", "other"),
-                tickers=",".join(tickers) if tickers else "",
-                confidence=float(draft_data.get("confidence", 0.5)),
-                status="pending",
-                created_at=datetime.utcnow(),
-            )
-            session.add(draft)
-            row = session.get(Headline, headline.id)
-            if row:
-                row.status = "drafted"
-                session.add(row)
-            session.commit()
+        if _commit_draft(
+            headline,
+            classification,
+            text=text,
+            fmt=fmt,
+            tickers=tickers,
+            confidence=float(draft_data.get("confidence", 0.5)),
+        ):
+            if budget:
+                budget.try_take(1)
             created += 1
 
-    logger.info("Created %d drafts (1 Sonnet call each)", created)
+    llm_count = created - template_count
+    logger.info(
+        "Created %d drafts (%d template, %d LLM)",
+        created,
+        template_count,
+        llm_count,
+    )
     return created
 
 

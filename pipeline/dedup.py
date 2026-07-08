@@ -1,33 +1,27 @@
-"""Skip LLM drafting when the same story was recently drafted."""
+"""Skip drafting when the same story was recently drafted."""
 
-import hashlib
-import re
 from datetime import datetime, timedelta
 
+from rapidfuzz import fuzz
 from sqlmodel import select
 
-from config import DRAFT_DEDUP_HOURS
+from config import DRAFT_DEDUP_HOURS, INGEST_TITLE_FUZZY_THRESHOLD
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
+from pipeline.story_key import normalize_title, story_fingerprint, title_fingerprint
 
 logger = setup_logging()
 
-# Statuses that mean we already handled this story
 _DEDUP_STATUSES = ("pending", "posted", "approved", "rejected", "stale")
 
 
-def story_fingerprint(title: str, source: str) -> str:
-    """Stable key from normalized title + source (same story, different URLs)."""
-    normalized = re.sub(r"\s+", " ", title.strip().lower())
-    raw = f"{source.strip().lower()}|{normalized}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:32]
-
-
 def was_recently_drafted(title: str, source: str, hours: int | None = None) -> bool:
-    """True if this story got a draft in the last N hours."""
+    """True if this story (including cross-source matches) got a draft recently."""
     hours = hours if hours is not None else DRAFT_DEDUP_HOURS
-    fp = story_fingerprint(title, source)
+    source_fp = story_fingerprint(title, source)
+    cross_fp = title_fingerprint(title)
+    norm = normalize_title(title)
     cutoff = datetime.utcnow() - timedelta(hours=hours)
 
     with get_session() as session:
@@ -39,7 +33,13 @@ def was_recently_drafted(title: str, source: str, hours: int | None = None) -> b
         ).all()
 
         for _draft, headline in rows:
-            if story_fingerprint(headline.title, headline.source) == fp:
+            if story_fingerprint(headline.title, headline.source) == source_fp:
                 return True
+            if headline.title_fp and headline.title_fp == cross_fp:
+                return True
+            if norm:
+                other = normalize_title(headline.title)
+                if other and fuzz.ratio(norm, other) >= INGEST_TITLE_FUZZY_THRESHOLD:
+                    return True
 
     return False

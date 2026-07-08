@@ -111,6 +111,13 @@ def test_finnhub_connection() -> dict:
         items = (earn_data or {}).get("earningsCalendar") or []
         result["earnings"] = {"ok": True, "count": len(items)}
 
+    macro_data, macro_err = finnhub_get("calendar/economic", {"from": today, "to": today})
+    if macro_err:
+        result["macro"] = {"ok": False, "error": macro_err}
+    else:
+        items = (macro_data or {}).get("economicCalendar") or []
+        result["macro"] = {"ok": True, "count": len(items)}
+
     # Spot-check company news for a liquid name
     co_data, co_err = finnhub_get(
         "company-news",

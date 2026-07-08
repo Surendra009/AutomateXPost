@@ -8,15 +8,12 @@ from typing import Any
 
 import feedparser
 import httpx
-from rapidfuzz import fuzz
 from sqlmodel import select
 
 from config import (
-    DEFAULT_FINNHUB_TICKERS,
     MAX_NEWS_AGE_HOURS,
     RSS_FEEDS,
     AI_RSS_FEEDS,
-    SEC_EDGAR_8K_FEED,
     SEC_USER_AGENT,
     get_finnhub_key,
 )
@@ -25,6 +22,8 @@ from logging_config import setup_logging
 from models import Headline
 from pipeline.finnhub_api import finnhub_get, parse_finnhub_timestamp
 from pipeline.freshness import is_fresh, news_cutoff
+from pipeline.ingest_dedup import load_ingest_dedup_index
+from pipeline.story_key import title_fingerprint
 
 logger = setup_logging()
 
@@ -58,19 +57,6 @@ def _get_summary(entry: Any) -> str:
             return re.sub(r"<[^>]+>", "", str(val))[:500]
     return ""
 
-
-def _is_duplicate(session, title: str, content_hash: str) -> bool:
-    cutoff = datetime.utcnow() - timedelta(hours=48)
-    existing = session.exec(
-        select(Headline).where(Headline.published_at >= cutoff)
-    ).all()
-
-    for h in existing:
-        if h.hash == content_hash:
-            return True
-        if fuzz.ratio(title.lower(), h.title.lower()) > 90:
-            return True
-    return False
 
 
 def _entries_from_feed(source: str, url: str, raw: str) -> list[dict]:
@@ -183,30 +169,30 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
         items = fetch_rss_feed(source, url)
         source_batches.append((source, items))
 
-    sec_items = fetch_sec_edgar_feed()
-    source_batches.append((SEC_EDGAR_8K_FEED[0], sec_items))
+    # SEC 8-K and Finnhub company news handled by structured processors (no double-fetch)
 
     finnhub_general = fetch_finnhub_general_news()
     source_batches.append(("Finnhub", finnhub_general))
 
-    finnhub_company = fetch_finnhub_company_news(watchlist or DEFAULT_FINNHUB_TICKERS)
-    if finnhub_company:
-        source_batches.append(("Finnhub watchlist", finnhub_company))
-
     per_source: dict[str, int] = {}
     skipped_stale: dict[str, int] = {}
+    skipped_dup: dict[str, int] = {}
     new_count = 0
+    dedup_index = load_ingest_dedup_index()
 
     with get_session() as session:
         for source, items in source_batches:
             added = 0
             skipped = 0
+            dupes = 0
             for item in items:
                 if not is_fresh(item["published_at"]):
                     skipped += 1
                     continue
                 chash = _content_hash(item["title"], item["url"])
-                if _is_duplicate(session, item["title"], chash):
+                dup_reason = dedup_index.is_duplicate(item["title"], chash)
+                if dup_reason:
+                    dupes += 1
                     continue
                 headline = Headline(
                     source=item["source"],
@@ -215,18 +201,24 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
                     summary=item["summary"],
                     published_at=item["published_at"],
                     hash=chash,
+                    title_fp=title_fingerprint(item["title"]),
                     status="new",
                 )
                 session.add(headline)
+                dedup_index.add(item["title"], chash)
                 new_count += 1
                 added += 1
             per_source[source] = added
             if skipped:
                 skipped_stale[source] = skipped
+            if dupes:
+                skipped_dup[source] = dupes
         session.commit()
 
     if skipped_stale:
         logger.info("Skipped stale headlines (>%dh): %s", MAX_NEWS_AGE_HOURS, skipped_stale)
+    if skipped_dup:
+        logger.info("Skipped cross-source duplicates: %s", skipped_dup)
     logger.info("Ingested %d new headlines: %s", new_count, per_source)
     return new_count, per_source
 

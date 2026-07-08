@@ -14,7 +14,16 @@ class Headline(SQLModel, table=True):
     summary: str = ""
     published_at: datetime
     hash: str = Field(index=True)
+    title_fp: str = Field(default="", index=True)  # cross-source normalized title key
     status: str = "new"  # new, filtered, discarded, drafted
+
+
+class ClassificationCache(SQLModel, table=True):
+    __tablename__ = "classification_cache"
+
+    fingerprint: str = Field(primary_key=True)
+    result_json: str
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class Draft(SQLModel, table=True):
@@ -39,6 +48,16 @@ class Post(SQLModel, table=True):
     draft_id: int = Field(foreign_key="drafts.id")
     tweet_id: str = ""
     posted_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RejectionFeedback(SQLModel, table=True):
+    __tablename__ = "rejection_feedback"
+
+    normalized_title: str = Field(primary_key=True)
+    title_sample: str = ""
+    reject_count: int = 1
+    pattern: str | None = None  # optional regex learned from repeated rejects
+    last_rejected_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class AppSetting(SQLModel, table=True):

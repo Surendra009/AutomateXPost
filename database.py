@@ -11,14 +11,55 @@ from models import AppSetting
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
 
+def _migrate_headline_title_fp() -> None:
+    """Add title_fp column to existing SQLite DBs (create_all won't alter tables)."""
+    import sqlite3
+
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+
+    db_path = DATABASE_URL.replace("sqlite:///", "", 1)
+    if not db_path or db_path == DATABASE_URL:
+        return
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("PRAGMA table_info(headlines)")
+        columns = {row[1] for row in cur.fetchall()}
+        if "title_fp" not in columns:
+            cur.execute("ALTER TABLE headlines ADD COLUMN title_fp TEXT DEFAULT ''")
+            cur.execute("CREATE INDEX IF NOT EXISTS ix_headlines_title_fp ON headlines (title_fp)")
+            conn.commit()
+        # Backfill empty title_fp for existing rows
+        from pipeline.story_key import title_fingerprint
+
+        cur.execute("SELECT id, title FROM headlines WHERE title_fp IS NULL OR title_fp = ''")
+        rows = cur.fetchall()
+        for row_id, title in rows:
+            cur.execute(
+                "UPDATE headlines SET title_fp = ? WHERE id = ?",
+                (title_fingerprint(title or ""), row_id),
+            )
+        if rows:
+            conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    _migrate_headline_title_fp()
     with Session(engine) as session:
         for key, value in DEFAULT_SETTINGS.items():
             existing = session.get(AppSetting, key)
             if not existing:
                 session.add(AppSetting(key=key, value=json.dumps(value)))
         session.commit()
+    from pipeline.feedback import backfill_from_rejected_drafts
+
+    backfill_from_rejected_drafts()
 
 
 @contextmanager
