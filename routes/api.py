@@ -24,6 +24,7 @@ from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
 from pipeline.dedup_mode import DEDUP_MODE_LABELS, get_dedup_mode
 from pipeline.queue_dedup import dedupe_pending_drafts
+from pipeline.stale import expire_stale_drafts
 
 logger = setup_logging()
 router = APIRouter(prefix="/api")
