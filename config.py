@@ -6,13 +6,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from security import getenv_secret, validate_security_config
+
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-in-production")
-APP_PASSWORD = os.getenv("APP_PASSWORD", "changeme")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
+APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
+APP_PASSWORD_HASH = getenv_secret("APP_PASSWORD_HASH")
+ANTHROPIC_API_KEY = getenv_secret("ANTHROPIC_API_KEY")
+OPENAI_API_KEY = getenv_secret("OPENAI_API_KEY")
 
 FINNHUB_ENV_NAMES = ("FINNHUB_KEY", "FINNHUB_API_KEY", "FINHUB_KEY")
 
@@ -20,17 +23,17 @@ FINNHUB_ENV_NAMES = ("FINNHUB_KEY", "FINNHUB_API_KEY", "FINHUB_KEY")
 def get_finnhub_key() -> str:
     """Read Finnhub API key (trimmed). Supports common env var name typos."""
     for name in FINNHUB_ENV_NAMES:
-        value = os.getenv(name, "").strip()
+        value = getenv_secret(name)
         if value:
             return value
     return ""
 
 
 FINNHUB_KEY = get_finnhub_key()
-X_API_KEY = os.getenv("X_API_KEY", "")
-X_API_SECRET = os.getenv("X_API_SECRET", "")
-X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN", "")
-X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET", "")
+X_API_KEY = getenv_secret("X_API_KEY")
+X_API_SECRET = getenv_secret("X_API_SECRET")
+X_ACCESS_TOKEN = getenv_secret("X_ACCESS_TOKEN")
+X_ACCESS_TOKEN_SECRET = getenv_secret("X_ACCESS_TOKEN_SECRET")
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() in ("1", "true", "yes")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = BASE_DIR / "postpilot.log"
@@ -89,9 +92,9 @@ MARKET_CLOSE_HOUR = int(os.getenv("MARKET_CLOSE_HOUR", "16"))
 ENABLE_THREADS = os.getenv("ENABLE_THREADS", "true").lower() in ("1", "true", "yes")
 ENABLE_POST_MEDIA = os.getenv("ENABLE_POST_MEDIA", "true").lower() in ("1", "true", "yes")
 ANALYTICS_REFRESH_HOURS = int(os.getenv("ANALYTICS_REFRESH_HOURS", "6"))
-ALERT_WEBHOOK_URL = os.getenv("ALERT_WEBHOOK_URL", "").strip()
-VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
-VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+ALERT_WEBHOOK_URL = getenv_secret("ALERT_WEBHOOK_URL")
+VAPID_PUBLIC_KEY = getenv_secret("VAPID_PUBLIC_KEY")
+VAPID_PRIVATE_KEY = getenv_secret("VAPID_PRIVATE_KEY")
 VAPID_CLAIMS_EMAIL = os.getenv("VAPID_CLAIMS_EMAIL", "mailto:admin@postpilot.local")
 
 REJECTION_REASONS = (
@@ -158,3 +161,12 @@ def get_settings():
         "push_configured": bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY),
         "alert_webhook_configured": bool(ALERT_WEBHOOK_URL),
     }
+
+
+def run_security_checks() -> None:
+    """Validate secrets; raises in production if misconfigured."""
+    validate_security_config(
+        secret_key=SECRET_KEY,
+        app_password=APP_PASSWORD,
+        app_password_hash=APP_PASSWORD_HASH,
+    )

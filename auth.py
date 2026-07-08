@@ -2,10 +2,12 @@ import time
 from collections import defaultdict
 from typing import Optional
 
+import bcrypt
 from fastapi import HTTPException, Request, Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from config import APP_PASSWORD, SECRET_KEY
+from config import APP_PASSWORD, APP_PASSWORD_HASH, SECRET_KEY
+from security import safe_compare_password
 
 serializer = URLSafeTimedSerializer(SECRET_KEY)
 SESSION_COOKIE = "postpilot_session"
@@ -13,6 +15,7 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 
 # Simple in-memory rate limiting for login
 _login_attempts: dict[str, list[float]] = defaultdict(list)
+_action_attempts: dict[str, list[float]] = defaultdict(list)
 MAX_LOGIN_ATTEMPTS = 5
 LOGIN_WINDOW_SECONDS = 300
 
@@ -37,8 +40,25 @@ def record_login_attempt(request: Request) -> None:
     _login_attempts[ip].append(time.time())
 
 
+def check_action_rate_limit(
+    request: Request,
+    action: str,
+    *,
+    max_calls: int = 30,
+    window_seconds: int = 60,
+) -> None:
+    """Limit expensive authenticated actions per IP (chat, pipeline run)."""
+    ip = _client_ip(request)
+    key = f"{ip}:{action}"
+    now = time.time()
+    _action_attempts[key] = [t for t in _action_attempts[key] if now - t < window_seconds]
+    if len(_action_attempts[key]) >= max_calls:
+        raise HTTPException(status_code=429, detail="Too many requests. Slow down.")
+    _action_attempts[key].append(now)
+
+
 def create_session_token() -> str:
-    return serializer.dumps({"authenticated": True})
+    return serializer.dumps({"authenticated": True, "v": 1})
 
 
 def verify_session_token(token: str) -> bool:
@@ -57,18 +77,31 @@ def set_session_cookie(response: Response, token: str) -> None:
         key=SESSION_COOKIE,
         value=token,
         httponly=True,
-        samesite="lax",
+        samesite="strict",
         max_age=SESSION_MAX_AGE,
         secure=bool(secure),
+        path="/",
     )
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(SESSION_COOKIE, path="/")
 
 
 def authenticate(password: str) -> bool:
-    return password == APP_PASSWORD
+    if not password:
+        return False
+    if APP_PASSWORD_HASH:
+        try:
+            return bcrypt.checkpw(
+                password.encode("utf-8"),
+                APP_PASSWORD_HASH.encode("utf-8"),
+            )
+        except ValueError:
+            return False
+    if APP_PASSWORD:
+        return safe_compare_password(password, APP_PASSWORD)
+    return False
 
 
 def get_session_from_request(request: Request) -> Optional[str]:

@@ -8,6 +8,7 @@ from sqlmodel import select
 from config import ANTHROPIC_API_KEY, FILTER_MODEL, MIN_AI_RELEVANCE_SCORE, MIN_RELEVANCE_SCORE
 from database import get_session, get_setting
 from logging_config import setup_logging
+from security import redact_secrets
 from models import Headline
 from pipeline.ai_news import enrich_ai_classification, is_ai_source, is_material_ai_update
 from pipeline.classify_cache import cache_classification, get_cached_classification, prune_classification_cache
@@ -84,7 +85,7 @@ def _call_claude(system: str, user: str, model: str, retry: bool = True, max_tok
         )
         return message.content[0].text
     except Exception as e:
-        logger.error("Claude API error: %s", e)
+        logger.error("Claude API error: %s", redact_secrets(str(e)))
         if retry:
             logger.info("Retrying Claude call once...")
             return _call_claude(system, user, model, retry=False, max_tokens=max_tokens)

@@ -13,6 +13,7 @@ from config import (
     OPENAI_API_KEY,
 )
 from logging_config import setup_logging
+from security import redact_secrets
 from pipeline.filter import _call_claude
 
 logger = setup_logging()
@@ -42,7 +43,7 @@ def _call_openai(system: str, user: str, model: str, *, max_tokens: int = 512) -
             data = resp.json()
             return data["choices"][0]["message"]["content"].strip()
     except Exception as exc:
-        logger.error("OpenAI API error: %s", exc)
+        logger.error("OpenAI API error: %s", redact_secrets(str(exc)))
         return None
 
 

@@ -10,6 +10,7 @@ import httpx
 
 from config import FINNHUB_ENV_NAMES, get_finnhub_key
 from logging_config import setup_logging
+from security import redact_secrets
 
 logger = setup_logging()
 
@@ -52,8 +53,8 @@ def finnhub_get(path: str, params: dict | None = None) -> tuple[Any | None, str 
         with httpx.Client(timeout=20) as client:
             resp = client.get(f"{BASE_URL}/{path.lstrip('/')}", params=query)
     except httpx.HTTPError as exc:
-        logger.warning("Finnhub network error (%s): %s", path, exc)
-        return None, f"Network error: {exc}"
+        logger.warning("Finnhub network error (%s): %s", path, redact_secrets(str(exc)))
+        return None, "Network error contacting Finnhub"
 
     if resp.status_code == 401:
         return None, "Invalid API key — check FINNHUB_KEY on Railway"
@@ -62,8 +63,7 @@ def finnhub_get(path: str, params: dict | None = None) -> tuple[Any | None, str 
     if resp.status_code == 429:
         return None, "Finnhub rate limit hit — try again in a minute"
     if resp.status_code >= 400:
-        body = resp.text[:200]
-        return None, f"Finnhub HTTP {resp.status_code}: {body}"
+        return None, f"Finnhub HTTP {resp.status_code}"
 
     try:
         return resp.json(), None
@@ -78,7 +78,6 @@ def test_finnhub_connection() -> dict:
     result: dict[str, Any] = {
         "configured": bool(key),
         "env_var": source,
-        "key_hint": f"{key[:4]}…" if len(key) >= 4 else None,
         "news": None,
         "earnings": None,
         "company_news": None,

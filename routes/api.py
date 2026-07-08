@@ -7,6 +7,7 @@ from sqlmodel import select, or_
 
 from auth import (
     authenticate,
+    check_action_rate_limit,
     check_login_rate_limit,
     clear_session_cookie,
     create_session_token,
@@ -131,6 +132,7 @@ def me(request: Request):
 @router.post("/chat")
 def post_chat(request: Request, body: ChatRequest):
     require_auth(request)
+    check_action_rate_limit(request, "chat", max_calls=40, window_seconds=60)
     message = body.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="message is required")
@@ -380,6 +382,7 @@ def finnhub_test(request: Request):
 @router.post("/pipeline/run")
 async def pipeline_run(request: Request):
     require_auth(request)
+    check_action_rate_limit(request, "pipeline", max_calls=10, window_seconds=60)
     status = get_pipeline_status()
     if status["running"]:
         raise HTTPException(status_code=409, detail="Pipeline is already running")

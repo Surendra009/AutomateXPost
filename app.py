@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import PIPELINE_INTERVAL_SECONDS, STATIC_DIR, get_settings
+from config import PIPELINE_INTERVAL_SECONDS, STATIC_DIR, get_settings, run_security_checks
 from database import init_db
 from logging_config import setup_logging
 from pipeline.scheduler import start_pipeline, stop_pipeline
@@ -18,6 +18,7 @@ logger = setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    run_security_checks()
     init_db()
     if os.getenv("SEED_ON_START", "false").lower() in ("1", "true", "yes"):
         seed()
@@ -31,6 +32,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="PostPilot", lifespan=lifespan)
 app.include_router(api_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("HTTPS", "").lower() == "true":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 @app.get("/", response_class=HTMLResponse)

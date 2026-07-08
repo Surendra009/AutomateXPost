@@ -622,7 +622,7 @@ function renderFinnhubStatus(fh) {
   }
   const rows = [];
   if (fh.configured) {
-    rows.push(`<div class="status-row"><span>API key</span><span class="status-ok">${esc(fh.env_var || 'FINNHUB_KEY')} ${esc(fh.key_hint || '')}</span></div>`);
+    rows.push(`<div class="status-row"><span>API key</span><span class="status-ok">Configured</span></div>`);
   } else {
     rows.push(`<div class="status-row"><span>API key</span><span class="status-no">Missing</span></div>`);
   }
