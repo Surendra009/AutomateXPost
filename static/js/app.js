@@ -18,6 +18,7 @@ let rejectDraftId = null;
 let scheduleDraftId = null;
 let rejectionReasons = [];
 let watchlist = [];
+let searchTopics = [];
 let queueData = { drafts: [], counts: { stock: 0, politics: 0 }, hidden_duplicates: 0 };
 
 // ── API helpers ──────────────────────────────────────────
@@ -1148,4 +1149,9 @@ if ('serviceWorker' in navigator) {
 
 // ── Init ─────────────────────────────────────────────────
 
-checkAuth();
+try {
+  checkAuth();
+} catch (err) {
+  console.error('PostPilot init failed', err);
+  showLogin();
+}
