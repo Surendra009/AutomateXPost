@@ -51,6 +51,7 @@ def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
     is_seed = bool(headline and "example.com" in (headline.url or ""))
     story_age = format_age(headline.published_at) if headline else None
     story_mins = age_minutes(headline.published_at) if headline else None
+    draft_mins = age_minutes(draft.created_at)
 
     return {
         "id": draft.id,
@@ -63,6 +64,7 @@ def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
         "status": draft.status,
         "created_at": draft.created_at.isoformat(),
         "age": format_age(draft.created_at),
+        "draft_age_minutes": draft_mins,
         "story_age": story_age,
         "story_age_minutes": story_mins,
         "story_fresh": is_fresh(headline.published_at) if headline else True,
