@@ -412,16 +412,74 @@ def extract_earnings_facts(text: str) -> EarningsFacts:
     return facts
 
 
-def build_earnings_line3(ticker: str, verb: str, facts: EarningsFacts) -> str:
+def _revenue_surprise_pct(actual: str, estimate: str) -> float | None:
+    try:
+        def _parse_money(s: str) -> float:
+            s = s.replace("$", "").replace(",", "").strip()
+            mult = 1.0
+            if s.endswith(("B", "b")):
+                mult = 1_000_000_000
+                s = s[:-1]
+            elif s.endswith(("M", "m")):
+                mult = 1_000_000
+                s = s[:-1]
+            elif s.endswith(("K", "k")):
+                mult = 1_000
+                s = s[:-1]
+            return float(s) * mult
+
+        a = _parse_money(actual)
+        e = _parse_money(estimate)
+        if e == 0:
+            return None
+        return (a - e) / abs(e) * 100
+    except (ValueError, AttributeError):
+        return None
+
+
+def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str:
+    """Company-specific line 3 — derived from numbers, not a shared template."""
+    eps_surp = None
+    if facts.eps_actual and facts.eps_estimate:
+        eps_surp = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
+
+    rev_surp = None
+    if facts.revenue_actual and facts.revenue_estimate:
+        rev_surp = _revenue_surprise_pct(facts.revenue_actual, facts.revenue_estimate)
+
     if verb == "beat":
-        if facts.eps_actual and facts.eps_estimate:
-            surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
-            if surprise is not None and surprise >= 8:
-                return f"Big EPS beat — {ticker} likely gaps up unless guidance disappoints"
-        return "Beat leans bullish into the call; guidance sets the real move"
+        if eps_surp is not None and rev_surp is not None:
+            if eps_surp >= 25 and rev_surp < 3:
+                return (
+                    f"EPS crushed estimates but revenue only cleared by {rev_surp:.0f}% — "
+                    "margins or one-offs likely drove the print"
+                )
+            if rev_surp >= 5 and eps_surp >= 5:
+                return (
+                    f"Revenue beat {rev_surp:.0f}% too — broad-based quarter, not a skinny top-line miss"
+                )
+            if rev_surp < -1:
+                return "EPS beat despite revenue missing — margin story needs to hold on the call"
+        if eps_surp is not None and eps_surp >= 80:
+            return f"Street was {eps_surp:.0f}% too low on EPS — models need a full reset after the call"
+        if eps_surp is not None and eps_surp >= 20:
+            return f"{eps_surp:.0f}% EPS surprise — sets a high bar for forward guidance tonight"
+        if rev_surp is not None and rev_surp >= 8:
+            return f"Revenue beat {rev_surp:.0f}% vs est — top-line momentum backs the EPS upside"
+        if facts.yoy_pct:
+            return f"Revenue up {facts.yoy_pct}% YoY — growth vs guide is the key read from here"
+        return "Segment mix and full-year outlook on the call decide if the beat sticks"
+
     if verb == "missed":
-        return "Miss opens a gap-down risk — watch for guide cuts on the call"
-    return "Print is in — segment mix and outlook drive the next leg"
+        if eps_surp is not None and rev_surp is not None and rev_surp < -2:
+            return f"Revenue missed {abs(rev_surp):.0f}% too — demand softness may be the bigger story"
+        if eps_surp is not None and eps_surp <= -15:
+            return f"EPS {abs(eps_surp):.0f}% below street — watch for guide cuts and margin commentary"
+        return "Miss opens downside risk — guidance and segment detail on the call matter most"
+
+    if facts.yoy_pct:
+        return f"Revenue growth ran +{facts.yoy_pct}% YoY — compare that pace to management's outlook"
+    return "Print is in — segment breakdown and guide frame the trade from here"
 
 
 def build_earnings_lines(
@@ -433,7 +491,7 @@ def build_earnings_lines(
     article_text: str = "",
     allow_llm: bool = True,
 ) -> tuple[str, str, str] | None:
-    """Hook (numbers) + commentary highlight + trade implication."""
+    """Hook (EPS) + revenue/facts line + company-specific commentary."""
     if not facts.has_numbers():
         return None
 
@@ -465,21 +523,23 @@ def build_earnings_lines(
         allow_llm=allow_llm,
     )
 
-    if highlight:
-        line2 = highlight
-    elif facts.revenue_actual and facts.revenue_estimate:
+    if facts.revenue_actual and facts.revenue_estimate and "revenue" not in line1.lower():
         line2 = f"Revenue {facts.revenue_actual} vs {facts.revenue_estimate} est"
     elif facts.yoy_pct:
-        line2 = f"Revenue growth ran +{facts.yoy_pct}% year over year"
+        line2 = f"Revenue growth +{facts.yoy_pct}% year over year"
     elif facts.eps_actual and facts.eps_estimate:
         surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
         if surprise is not None:
             word = "cleared" if surprise >= 0 else "missed"
             line2 = f"EPS {word} the street by {abs(surprise):.0f}%"
         else:
-            line2 = "Headline numbers vs the street — details on the call"
+            line2 = "Headline numbers vs the street"
     else:
-        line2 = "Segment commentary and guide will frame the trade"
+        line2 = "Full segment breakdown on the call"
 
-    line3 = build_earnings_line3(ticker, verb, facts)
+    if highlight and highlight.lower() not in line2.lower():
+        line3 = highlight
+    else:
+        line3 = build_earnings_insight(ticker, verb, facts)
+
     return line1, line2, line3

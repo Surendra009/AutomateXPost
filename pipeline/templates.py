@@ -14,7 +14,12 @@ from pipeline.ai_news import (
     is_material_ai_update,
 )
 from pipeline.earnings_dedup import earnings_ticker_blocked
-from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts
+from pipeline.earnings_parse import (
+    build_earnings_lines,
+    extract_earnings_facts,
+    fetch_earnings_article_text,
+    fetch_earnings_news_context,
+)
 from pipeline.enrich import fetch_article_text
 
 # ── Earnings patterns ─────────────────────────────────────────────────────
@@ -171,15 +176,18 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
         return None
     facts = extract_earnings_facts(text)
     article = ""
+    news_context = fetch_earnings_news_context(ticker)
     if headline.url:
         article = fetch_article_text(headline.url) or ""
-        if article:
-            facts = extract_earnings_facts(f"{text} {article[:3000]}")
+    if not article:
+        article = fetch_earnings_article_text(ticker)
+    if article or news_context:
+        facts = extract_earnings_facts(f"{text} {news_context} {article[:3000]}")
     lines = build_earnings_lines(
         ticker,
         verb,
         facts,
-        source_text=text,
+        source_text=f"{text} {news_context}".strip(),
         article_text=article,
     )
     if not lines:

@@ -77,9 +77,8 @@ For earnings: include EPS/revenue vs consensus, surprise %, AND one segment/guid
 ## Good earnings example
 ```
 PENG beat Q3 EPS $0.84 — 53% above consensus
-Revenue $479M vs $414M est; infrastructure segment drove the beat
-Management raised full-year guide on strong AI server demand
-Big EPS beat — stock likely gaps up unless guide disappoints on the call
+Revenue $479M vs $414M est
+Infrastructure segment drove the beat; management raised full-year guide on AI server demand
 
 $PENG
 ```"""
