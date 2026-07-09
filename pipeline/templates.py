@@ -177,6 +177,7 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
         ticker,
         finnhub_facts=facts,
         finnhub_summary=text,
+        headline_url=headline.url or "",
     )
     if enrichment.news_context or enrichment.article_text:
         facts = enrichment.facts or extract_earnings_facts(

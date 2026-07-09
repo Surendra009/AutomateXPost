@@ -23,6 +23,25 @@ from pipeline.web_search import search_google_news
 
 logger = setup_logging()
 
+_cycle_enrichments: list[dict] = []
+
+
+def reset_earnings_enrich_stats() -> None:
+    global _cycle_enrichments
+    _cycle_enrichments = []
+
+
+def earnings_enrich_summary() -> dict:
+    """Last pipeline cycle earnings web cross-pull stats for settings UI."""
+    verified = sum(1 for row in _cycle_enrichments if row.get("verified"))
+    return {
+        "tickers_enriched": len(_cycle_enrichments),
+        "articles_fetched": sum(row.get("articles", 0) for row in _cycle_enrichments),
+        "web_headlines": sum(row.get("headlines", 0) for row in _cycle_enrichments),
+        "cross_verified": verified,
+        "recent": _cycle_enrichments[-5:],
+    }
+
 
 @dataclass
 class EarningsEnrichment:
@@ -126,6 +145,7 @@ def enrich_earnings_context(
     year: int | None = None,
     finnhub_facts: EarningsFacts | None = None,
     finnhub_summary: str = "",
+    headline_url: str = "",
 ) -> EarningsEnrichment:
     """Web search + article fetch to enrich/verify Finnhub earnings before LLM."""
     symbol = symbol.upper()
@@ -147,6 +167,7 @@ def enrich_earnings_context(
         queries = [
             f'"{symbol}" {q_label} earnings EPS revenue beat miss {year_s}'.strip(),
             f'"{symbol}" earnings results segment guidance outlook',
+            f'"{symbol}" quarterly earnings press release',
         ][:MAX_EARNINGS_WEB_QUERIES]
         seen_urls: set[str] = set()
         for query in queries:
@@ -178,6 +199,11 @@ def enrich_earnings_context(
     if fh_article:
         articles.append(fh_article)
 
+    if headline_url and headline_url.startswith("http"):
+        direct = fetch_article_text(headline_url)
+        if direct and len(direct) > 200 and direct not in articles:
+            articles.append(direct[:3500])
+
     fetched = 0
     for item in web_items:
         if fetched >= MAX_EARNINGS_WEB_ARTICLES:
@@ -202,6 +228,17 @@ def enrich_earnings_context(
         merged = merge_facts(finnhub_facts, web_facts)
         if cross_check:
             logger.info("Earnings cross-check %s: %s", symbol, "; ".join(cross_check))
+
+    verified = any(note.startswith("Cross-verified:") for note in cross_check)
+    _cycle_enrichments.append(
+        {
+            "symbol": symbol,
+            "headlines": len(web_items),
+            "articles": len(sources),
+            "verified": verified,
+            "notes": cross_check[:2],
+        }
+    )
 
     return EarningsEnrichment(
         news_context=news_context,

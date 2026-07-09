@@ -745,6 +745,11 @@ async function loadSettings() {
     } else if (earn.reporting_today > 0) {
       earnLine = `<div class="status-row"><span>Earnings today</span><span>${earn.reporting_today} on watchlist</span></div>`;
     }
+    const enrich = pipe.earnings_enrich || {};
+    let enrichLine = '';
+    if (enrich.tickers_enriched > 0) {
+      enrichLine = `<div class="status-row"><span>Earnings web pull</span><span>${enrich.tickers_enriched} ticker${enrich.tickers_enriched === 1 ? '' : 's'} · ${enrich.articles_fetched || 0} articles · ${enrich.cross_verified || 0} verified</span></div>`;
+    }
     document.getElementById('pipeline-status').innerHTML = `
       <div class="status-row">
         <span>Schedule</span>
@@ -759,6 +764,7 @@ async function loadSettings() {
         <span>${pipe.last_drafts_created ?? 0} drafts · ${pipe.last_ingest_count ?? 0} headlines</span>
       </div>
       ${earnLine}
+      ${enrichLine}
       <div class="status-row">
         <span>Build</span>
         <span>${esc(cfg.build || '—')}</span>
@@ -1155,7 +1161,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=50').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=53').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

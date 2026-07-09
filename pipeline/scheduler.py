@@ -21,6 +21,7 @@ from pipeline.cycle_context import cycle_max_news_age
 from pipeline.draft import draft_posts
 from pipeline.draft_budget import DraftBudget
 from pipeline.earnings import process_earnings
+from pipeline.earnings_enrich import reset_earnings_enrich_stats
 from pipeline.earnings_parse import reset_earnings_highlight_budget
 from pipeline.feedback import feedback_stats
 from pipeline.filter import filter_headlines
@@ -40,6 +41,7 @@ from pipeline.schedule import (
 from pipeline.sec_filings import clear_sec_feed_cache, process_sec_filings
 from pipeline.scheduled_posts import process_scheduled_posts
 from pipeline.earnings_calendar import get_earnings_pipeline_summary
+from pipeline.earnings_enrich import earnings_enrich_summary, reset_earnings_enrich_stats
 from pipeline.discord import notify_discord_new_drafts
 from pipeline.push import notify_new_drafts
 from pipeline.teams import notify_teams_new_drafts
@@ -66,6 +68,7 @@ def get_pipeline_status() -> dict:
         "news_sources": _active_news_sources(),
         "finnhub": get_finnhub_status(),
         "earnings": get_earnings_pipeline_summary(),
+        "earnings_enrich": earnings_enrich_summary(),
         "schedule": schedule_status(),
         "feedback": feedback_stats(),
     }
@@ -194,6 +197,7 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
 
             logger.info("Pipeline cycle starting (%s)", decision.mode)
             reset_earnings_highlight_budget()
+            reset_earnings_enrich_stats()
             clear_sec_feed_cache()
             expired = expire_stale_drafts()
             discarded = discard_stale_headlines()
