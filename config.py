@@ -10,7 +10,7 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-APP_BUILD = os.getenv("APP_BUILD", "51")
+APP_BUILD = os.getenv("APP_BUILD", "52")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
@@ -89,6 +89,8 @@ WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() in ("1", "t
 MAX_WEB_RESULTS_PER_QUERY = int(os.getenv("MAX_WEB_RESULTS_PER_QUERY", "6"))
 MAX_WEB_TICKERS_PER_CYCLE = int(os.getenv("MAX_WEB_TICKERS_PER_CYCLE", "8"))
 MAX_WEB_TOPICS_PER_CYCLE = int(os.getenv("MAX_WEB_TOPICS_PER_CYCLE", "5"))
+MAX_EARNINGS_WEB_QUERIES = int(os.getenv("MAX_EARNINGS_WEB_QUERIES", "2"))
+MAX_EARNINGS_WEB_ARTICLES = int(os.getenv("MAX_EARNINGS_WEB_ARTICLES", "3"))
 FINNHUB_GENERAL_SUPPLEMENT = os.getenv("FINNHUB_GENERAL_SUPPLEMENT", "false").lower() in (
     "1",
     "true",

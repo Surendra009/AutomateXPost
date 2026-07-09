@@ -18,11 +18,10 @@ from pipeline.dedup import was_recently_drafted
 from pipeline.draft_budget import DraftBudget
 from pipeline.earnings_dedup import earnings_ticker_blocked, expire_earnings_previews_for_ticker
 from pipeline.earnings_freshness import estimate_earnings_release_utc, is_earnings_fresh
+from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.earnings_parse import (
     EarningsFacts,
     build_earnings_lines,
-    fetch_earnings_article_text,
-    fetch_earnings_news_context,
 )
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
@@ -192,14 +191,20 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
         revenue_actual=rev_actual_s,
         revenue_estimate=rev_est_s,
     )
-    news_context = fetch_earnings_news_context(symbol)
-    article_text = fetch_earnings_article_text(symbol)
+    enrichment = enrich_earnings_context(
+        symbol,
+        quarter=quarter,
+        year=year,
+        finnhub_facts=facts,
+        finnhub_summary=summary,
+    )
+    facts = enrichment.facts or facts
     lines = build_earnings_lines(
         symbol,
         verb,
         facts,
-        source_text=news_context or summary,
-        article_text=article_text,
+        source_text=enrichment.news_context or summary,
+        article_text=enrichment.article_text,
         allow_llm=True,
     )
     if lines:
