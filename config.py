@@ -10,7 +10,7 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-APP_BUILD = os.getenv("APP_BUILD", "48")
+APP_BUILD = os.getenv("APP_BUILD", "49")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
@@ -116,9 +116,11 @@ VAPID_CLAIMS_EMAIL = os.getenv("VAPID_CLAIMS_EMAIL", "mailto:admin@postpilot.loc
 
 REJECTION_REASONS = (
     "too_vague",
+    "too_small",
     "wrong_ticker",
     "bad_hook",
     "too_long",
+    "duplicate",
     "off_topic",
     "listicle",
     "other",

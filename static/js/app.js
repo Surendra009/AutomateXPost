@@ -929,9 +929,11 @@ document.querySelectorAll('.pause-btn').forEach((btn) => {
 
 const REJECT_LABELS = {
   too_vague: 'Too vague',
+  too_small: 'Too small / thin',
   wrong_ticker: 'Wrong ticker',
   bad_hook: 'Weak hook',
   too_long: 'Too long',
+  duplicate: 'Duplicate',
   off_topic: 'Off topic',
   listicle: 'Listicle / fluff',
   other: 'Other',
@@ -1095,7 +1097,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=48').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=49').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

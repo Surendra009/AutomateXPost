@@ -158,9 +158,11 @@ def is_learned_noise(title: str) -> str | None:
 
 _REASON_HINTS = {
     "too_vague": "User rejected vague posts — be specific with company + action + number.",
+    "too_small": "User rejected thin posts — add more numbers, segment detail, and why it matters.",
     "wrong_ticker": "User rejected wrong ticker — verify tickers match the headline subject.",
     "bad_hook": "User rejected weak hooks — line 1 must be scroll-stopping, not generic.",
     "too_long": "User rejected long posts — keep to 3 body lines, under 300 characters.",
+    "duplicate": "User rejected duplicate coverage — avoid stories already drafted or posted recently.",
     "off_topic": "User rejected off-topic angle — stay on the headline story only.",
     "listicle": "User rejected listicle/roundup tone — never write stock-pick listicles.",
     "other": "User rejected similar posts — improve specificity and hook.",
