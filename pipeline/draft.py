@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime
 
-from config import DRAFT_MODEL, MAX_DRAFTS_PER_CYCLE
+from config import DRAFT_ARTICLE_CHARS, DRAFT_MAX_TOKENS, DRAFT_MODEL, DRAFT_PROVIDER, MAX_DRAFTS_PER_CYCLE
 from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Draft, Headline
@@ -20,13 +20,14 @@ from pipeline.earnings_dedup import (
 from pipeline.classify_cache import get_cached_classification
 from pipeline.enrich import get_article_text_for_draft
 from pipeline.feedback import drafter_feedback_hints
-from pipeline.filter import _call_claude, _parse_json_array
+from pipeline.filter import _parse_json_array
 from pipeline.freshness import is_fresh
+from pipeline.llm_providers import call_llm
 from pipeline.templates import try_template_draft
 
 logger = setup_logging()
 
-MAX_CHARS = {"BREAKING": 275, "CONTEXT": 295, "SUMMARY": 400}
+MAX_CHARS = {"BREAKING": 295, "CONTEXT": 320, "SUMMARY": 420}
 
 DRAFT_SYSTEM_PROMPT = """You read tech and stock news, decide if it's worth posting on X, and write the post in one step.
 
@@ -41,53 +42,46 @@ Return JSON only:
 }
 
 ## When to skip (skip=true)
-- Vague wire headlines with no specific company or data ("stocks rise", "investors await Fed")
+- Vague wire headlines with no specific company or data
 - Rehashed news with no new information
-- Can't explain what happened AND why it matters in three substantive lines
-- Minor UI tweaks or fluff without real product/market impact
+- Can't explain what happened AND why it matters with real specifics
 
-## Post layout (use \\n in text)
+## Post layout (use \\n in text) — aim for 4 substantive lines before tickers
 ```
-Hook — company + concrete action or surprise number
+Hook — company + concrete surprise (number or action)
 
-Key detail — one specific fact (product, deal size, guidance, timeline)
+Key detail — segment, product, deal size, or guidance change with numbers
 
-Why it matters — clear takeaway for investors or builders
+Second detail — margin, demand, YoY %, management quote, or competitive angle
+
+Why it matters — stock impact, who wins/loses, what to watch next
 
 $TICKER
 ```
 
-## Tone
-- Informative and conversational — like a sharp market analyst, not a wire headline
-- Confident but not hypey; explain the story, don't sell it
-- Use plain language; avoid jargon ("read-through", "intraday", "yoy")
+For earnings: include EPS/revenue vs consensus, surprise %, AND one segment/guidance highlight from the article.
 
-## Hook rules (critical for engagement)
-- Line 1 must stop the scroll: company + concrete action OR one surprise number
-- Never open with "Investors", "Markets", "Traders", or "Wall Street"
-- Prefer active verbs: launched, beat, cut, acquired, filed, raised
+## Tone
+- Informative and conversational — sharp market analyst, not a wire headline
+- Use plain language; explain acronyms once if needed
 
 ## Rules
-- Aim for 3 body lines before tickers — enough detail to stand alone, not a thread
-- Target 240–300 characters total (CONTEXT/BREAKING); SUMMARY up to ~360
-- Be specific: name the company, product, and at least one number when available
-- Line 3 = the "so what" — stock impact, competitive angle, or who wins/loses
-- Sentence case. Never ALL CAPS except $TICKERS
-- Up to 3 numbers in the whole post (EPS, revenue, %, deal size)
-- No emojis
-- Optional: one topic hashtag on macro/earnings days only if allow_hashtags is true (#CPI, #NVDAearnings)
-- Otherwise no hashtags — cashtags on the last line only
-- Each line under ~95 characters
-- Tickers on the last line (use tickers array too)
+- Use ALL important numbers from the article (up to 5 figures total)
+- Pull segment breakdown, guidance, margins, or demand when present — do not stop at headline EPS only
+- Target 260–320 characters (BREAKING/CONTEXT); SUMMARY up to ~400
+- Line 1 must stop the scroll — company + concrete action or surprise number
+- Never open with "Investors", "Markets", "Traders", or "Wall Street"
+- Sentence case. No emojis. Cashtags on the last line only
 - Don't copy the headline verbatim
 
-## Good example
+## Good earnings example
 ```
-Nvidia beat Q4 estimates on data-center demand
-Revenue hit $22.1B vs $20.4B expected; guidance topped the street
-Hyperscaler capex keeps flowing into AI chips — margin story intact
+PENG beat Q3 EPS $0.84 — 53% above consensus
+Revenue $479M vs $414M est; infrastructure segment drove the beat
+Management raised full-year guide on strong AI server demand
+Big EPS beat — stock likely gaps up unless guide disappoints on the call
 
-$NVDA
+$PENG
 ```"""
 
 
@@ -110,7 +104,7 @@ def _build_draft_prompt(headline: Headline, classification: dict, article_text: 
     if classification.get("angle"):
         parts.append(f"Angle: {classification['angle']}")
     if article_text:
-        parts.append(f"Article excerpt:\n{article_text[:2500]}")
+        parts.append(f"Article excerpt (use specific details from here):\n{article_text[:DRAFT_ARTICLE_CHARS]}")
     parts.append("\nDecide skip or write the post. Return JSON.")
     return "\n\n".join(parts)
 
@@ -271,7 +265,13 @@ def draft_posts(
 
         article_text = get_article_text_for_draft(headline, classification)
         prompt = _build_draft_prompt(headline, classification, article_text)
-        raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=750)
+        raw = call_llm(
+            DRAFT_SYSTEM_PROMPT,
+            prompt,
+            model=DRAFT_MODEL,
+            provider=DRAFT_PROVIDER,
+            max_tokens=DRAFT_MAX_TOKENS,
+        )
         if not raw:
             _discard_headline(headline, "draft LLM failed")
             continue
@@ -322,36 +322,35 @@ def draft_posts(
 
 
 def _passes_style_check(text: str, fmt: str) -> bool:
-    limit = MAX_CHARS.get(fmt, 280)
-    if len(text) > limit + 40:
+    limit = MAX_CHARS.get(fmt, 320)
+    if len(text) > limit + 60:
         return False
 
     letters = [c for c in text if c.isalpha()]
-    if letters and sum(1 for c in letters if c.isupper()) / len(letters) > 0.35:
+    if letters and sum(1 for c in letters if c.isupper()) / len(letters) > 0.4:
         return False
 
     dollar_count = len(re.findall(r"(?:~)?\$[\d,.]+[BMK]?", text))
     pct_count = len(re.findall(r"\d+\.?\d*%", text))
-    if dollar_count > 3 or (dollar_count + pct_count) > 4:
+    if dollar_count > 5 or (dollar_count + pct_count) > 6:
         return False
 
     lines = [ln for ln in text.split("\n") if ln.strip()]
     if len(lines) < 3:
         return False
 
-    if "\n" not in text and len(text) > 120:
+    if "\n" not in text and len(text) > 140:
         return False
 
     for ln in lines:
-        if len(ln) > 120:
+        if len(ln) > 140:
             return False
 
-    if len(lines) > 7:
+    if len(lines) > 9:
         return False
 
     jargon = re.compile(
-        r"\b(intraday|street consensus|read-through|signals capital|the cushion|"
-        r"year-over-year|yoy|sequentially|guidance range|underwriters hold)\b",
+        r"\b(intraday|read-through|signals capital|the cushion|sequentially)\b",
         re.I,
     )
     if jargon.search(text):
@@ -395,7 +394,13 @@ def regenerate_draft(draft_id: int) -> Draft | None:
     }
     article_text = get_article_text_for_draft(headline, classification)
     prompt = _build_draft_prompt(headline, classification, article_text)
-    raw = _call_claude(DRAFT_SYSTEM_PROMPT, prompt, DRAFT_MODEL, max_tokens=750)
+    raw = call_llm(
+        DRAFT_SYSTEM_PROMPT,
+        prompt,
+        model=DRAFT_MODEL,
+        provider=DRAFT_PROVIDER,
+        max_tokens=DRAFT_MAX_TOKENS,
+    )
     if not raw:
         return None
 

@@ -736,6 +736,10 @@ async function loadSettings() {
         <span>${esc(cfg.build || '—')}</span>
       </div>
       <div class="status-row">
+        <span>Draft LLM</span>
+        <span>${esc((data.llm?.draft_provider || '—') + ' / ' + (data.llm?.draft_model || '—'))}</span>
+      </div>
+      <div class="status-row">
         <span>Finnhub</span>
         <span class="${cfg.finnhub_configured ? 'status-ok' : 'status-no'}">${cfg.finnhub_configured ? 'Connected' : 'Not set'}</span>
       </div>
@@ -1053,7 +1057,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=44').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=45').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

@@ -29,7 +29,7 @@ from pipeline.freshness import discard_stale_headlines, format_age, age_minutes,
 from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.post import PostingError, get_today_stats, publish_draft
 from pipeline.discord import send_discord_test_message, discord_configured
-from pipeline.push import get_vapid_public_key, push_configured, remove_subscription, save_subscription
+from pipeline.llm_providers import llm_status
 from pipeline.teams import send_teams_test_message, teams_configured
 from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
 from pipeline.dedup_mode import DEDUP_MODE_LABELS, get_dedup_mode
@@ -383,6 +383,7 @@ def get_settings_route(request: Request):
     settings["discord"] = {
         "configured": discord_configured(),
     }
+    settings["llm"] = llm_status()
     settings["chat"] = chat_llm_status()
     return settings
 

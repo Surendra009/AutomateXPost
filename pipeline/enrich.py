@@ -11,7 +11,7 @@ from pipeline.url_resolve import resolve_article_url
 
 logger = setup_logging()
 
-MAX_ARTICLE_CHARS = 4000
+MAX_ARTICLE_CHARS = 5000
 FETCH_TIMEOUT = 12.0
 
 SKIP_FETCH_DOMAINS = {
@@ -30,6 +30,10 @@ def should_fetch_article(headline: Headline, classification: dict) -> bool:
         return True
 
     if headline.source == "SEC EDGAR 8-K" and len(summary) < 200:
+        return True
+
+    # High-impact stories benefit from full article context
+    if classification.get("impact") == "high":
         return True
 
     return False

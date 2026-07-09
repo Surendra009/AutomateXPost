@@ -10,13 +10,15 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-APP_BUILD = os.getenv("APP_BUILD", "44")
+APP_BUILD = os.getenv("APP_BUILD", "45")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
 APP_PASSWORD_HASH = getenv_secret("APP_PASSWORD_HASH")
 ANTHROPIC_API_KEY = getenv_secret("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = getenv_secret("OPENAI_API_KEY")
+DEEPSEEK_API_KEY = getenv_secret("DEEPSEEK_API_KEY")
+DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
 
 FINNHUB_ENV_NAMES = ("FINNHUB_KEY", "FINNHUB_API_KEY", "FINHUB_KEY")
 
@@ -39,8 +41,12 @@ DRY_RUN = os.getenv("DRY_RUN", "true").lower() in ("1", "true", "yes")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 LOG_FILE = BASE_DIR / "postpilot.log"
 
-FILTER_MODEL = "claude-haiku-4-5"
-DRAFT_MODEL = "claude-sonnet-4-6"
+FILTER_MODEL = os.getenv("FILTER_MODEL", "deepseek-chat")
+DRAFT_MODEL = os.getenv("DRAFT_MODEL", "deepseek-chat")
+DRAFT_PROVIDER = os.getenv("DRAFT_PROVIDER", "auto")  # auto | deepseek | anthropic | openai
+FILTER_PROVIDER = os.getenv("FILTER_PROVIDER", "auto")
+DRAFT_MAX_TOKENS = int(os.getenv("DRAFT_MAX_TOKENS", "1200"))
+DRAFT_ARTICLE_CHARS = int(os.getenv("DRAFT_ARTICLE_CHARS", "4500"))
 # Chat assistant: Haiku is best on Anthropic (fast/cheap). Alternatives if no Claude:
 #   CHAT_PROVIDER=openai  CHAT_MODEL=gpt-4o-mini  (recommended non-Claude option)
 #   CHAT_PROVIDER=openai  CHAT_MODEL=gpt-4.1-nano  (cheaper, still capable)
@@ -56,7 +62,7 @@ OVERNIGHT_CATCHUP_HOUR = int(os.getenv("OVERNIGHT_CATCHUP_HOUR", "5"))  # run on
 OVERNIGHT_CATCHUP_MAX_AGE_HOURS = int(os.getenv("OVERNIGHT_CATCHUP_MAX_AGE_HOURS", "8"))  # 10pm–5am window
 WEEKEND_INTERVAL_HOURS = int(os.getenv("WEEKEND_INTERVAL_HOURS", "3"))  # Sat/Sun: one run per 3 hours
 MAX_HEADLINES_PER_CYCLE = 35
-MAX_DRAFTS_PER_CYCLE = 3
+MAX_DRAFTS_PER_CYCLE = int(os.getenv("MAX_DRAFTS_PER_CYCLE", "5"))
 MAX_EARNINGS_DRAFTS_PER_CYCLE = 5
 MAX_MARKET_EARNINGS_DRAFTS_PER_CYCLE = 3  # beat/miss drafts when watchlist is empty
 EARNINGS_PREVIEW_DAYS_FORWARD = 2  # preview drafts for watchlist tickers
@@ -71,7 +77,7 @@ MAX_NEWS_AGE_HOURS = 4  # ignore headlines published before this window
 MAX_EARNINGS_AGE_HOURS = 2  # skip/post-block earnings results older than this
 EARNINGS_WINDOW_END_HOUR = 20  # faster polling until 8pm ET for AMC results
 MIN_SUMMARY_CHARS_FOR_SKIP_FETCH = 100  # skip full article fetch when RSS summary is enough
-ARTICLE_FETCH_CATEGORIES = frozenset({"earnings", "macro"})  # always fetch article for these
+ARTICLE_FETCH_CATEGORIES = frozenset({"earnings", "macro", "ai", "regulatory", "ipo"})
 DRAFT_DEDUP_HOURS = 24  # skip LLM if same story was drafted within this window
 INGEST_DEDUP_HOURS = 24  # cross-source title dedup window at ingest
 INGEST_TITLE_FUZZY_THRESHOLD = 88  # fuzzy match across sources (slightly below exact)
@@ -167,6 +173,7 @@ def get_settings():
     return {
         "anthropic_configured": bool(ANTHROPIC_API_KEY),
         "openai_configured": bool(OPENAI_API_KEY),
+        "deepseek_configured": bool(DEEPSEEK_API_KEY),
         "x_configured": all([X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]),
         "finnhub_configured": bool(get_finnhub_key()),
         "dry_run": DRY_RUN,

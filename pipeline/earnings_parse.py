@@ -261,14 +261,17 @@ def extract_earnings_highlight(text: str) -> str | None:
 
 
 def llm_earnings_highlight(source_text: str, ticker: str) -> str | None:
-    """One cheap Haiku line when regex can't find commentary in a long article."""
+    """One cheap LLM line when regex can't find commentary in a long article."""
     global _llm_highlight_calls
-    if not ANTHROPIC_API_KEY or len(source_text) < 250:
+    from config import FILTER_MODEL, FILTER_PROVIDER
+    from pipeline.llm_providers import call_llm, deepseek_configured
+
+    if len(source_text) < 250:
+        return None
+    if not deepseek_configured() and not ANTHROPIC_API_KEY:
         return None
     if _llm_highlight_calls >= _LLM_HIGHLIGHTS_PER_CYCLE:
         return None
-
-    from pipeline.filter import _call_claude
 
     prompt = (
         f"Ticker: {ticker}\n"
@@ -278,7 +281,14 @@ def llm_earnings_highlight(source_text: str, ticker: str) -> str | None:
         "Do not repeat EPS/revenue headline numbers. Plain text only."
     )
     system = "You extract one sharp earnings highlight for a stock post."
-    raw = _call_claude(system, prompt, FILTER_MODEL, max_tokens=80, retry=False)
+    raw = call_llm(
+        system,
+        prompt,
+        model=FILTER_MODEL,
+        provider=FILTER_PROVIDER,
+        max_tokens=80,
+        retry=False,
+    )
     _llm_highlight_calls += 1
     if not raw:
         return None
