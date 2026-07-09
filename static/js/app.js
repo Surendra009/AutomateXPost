@@ -784,21 +784,63 @@ function renderWatchlist() {
       <button class="chip-remove" data-ticker="${esc(t)}">&times;</button>
     </span>`).join('');
   container.querySelectorAll('.chip-remove').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       watchlist = watchlist.filter((t) => t !== btn.dataset.ticker);
       renderWatchlist();
+      await persistWatchlist();
     });
   });
 }
 
-document.getElementById('add-ticker').addEventListener('click', () => {
-  const input = document.getElementById('watchlist-input');
-  const val = input.value.trim().toUpperCase().replace(/^\$/, '');
-  if (val && !watchlist.includes(val)) {
-    watchlist.push(val);
+async function persistWatchlist() {
+  try {
+    const data = await api('/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ watchlist }),
+    });
+    watchlist = data.watchlist || watchlist;
     renderWatchlist();
+  } catch (err) {
+    showToast(err.message, 'error');
   }
-  input.value = '';
+}
+
+async function persistSearchTopics() {
+  try {
+    const data = await api('/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ search_topics: searchTopics }),
+    });
+    searchTopics = data.search_topics || searchTopics;
+    renderTopics();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function addWatchlistTicker(raw) {
+  const val = raw.trim().toUpperCase().replace(/^\$/, '');
+  if (!val || watchlist.includes(val)) return false;
+  watchlist.push(val);
+  renderWatchlist();
+  await persistWatchlist();
+  return true;
+}
+
+document.getElementById('add-ticker').addEventListener('click', async () => {
+  const input = document.getElementById('watchlist-input');
+  if (await addWatchlistTicker(input.value)) {
+    input.value = '';
+  }
+});
+
+document.getElementById('watchlist-input').addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const input = e.target;
+  if (await addWatchlistTicker(input.value)) {
+    input.value = '';
+  }
 });
 
 function renderTopics() {
@@ -809,23 +851,39 @@ function renderTopics() {
       <button class="chip-remove" data-topic="${esc(topic)}">&times;</button>
     </span>`).join('');
   container.querySelectorAll('.chip-remove').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       searchTopics = searchTopics.filter((t) => t !== btn.dataset.topic);
       renderTopics();
+      await persistSearchTopics();
     });
   });
 }
 
-document.getElementById('add-topic').addEventListener('click', () => {
-  const input = document.getElementById('topic-input');
-  const val = input.value.trim().replace(/\s+/g, ' ');
-  if (!val) return;
+async function addSearchTopic(raw) {
+  const val = raw.trim().replace(/\s+/g, ' ');
+  if (!val) return false;
   const key = val.toLowerCase();
-  if (!searchTopics.some((t) => t.toLowerCase() === key)) {
-    searchTopics.push(val);
-    renderTopics();
+  if (searchTopics.some((t) => t.toLowerCase() === key)) return false;
+  searchTopics.push(val);
+  renderTopics();
+  await persistSearchTopics();
+  return true;
+}
+
+document.getElementById('add-topic').addEventListener('click', async () => {
+  const input = document.getElementById('topic-input');
+  if (await addSearchTopic(input.value)) {
+    input.value = '';
   }
-  input.value = '';
+});
+
+document.getElementById('topic-input').addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter') return;
+  e.preventDefault();
+  const input = e.target;
+  if (await addSearchTopic(input.value)) {
+    input.value = '';
+  }
 });
 
 document.getElementById('fetch-now').addEventListener('click', async () => {
@@ -1097,7 +1155,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=49').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=50').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────
