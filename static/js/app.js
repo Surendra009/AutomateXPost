@@ -3,16 +3,6 @@
 const API = '/api';
 let currentTab = 'stock';
 let refreshTimer = null;
-const DEDUP_MODE_DESC = {
-  pipeline: 'Block duplicate stories before drafting (saves API cost).',
-  queue: 'Draft duplicates allowed, but only the best draft per story shows in queue.',
-  off: 'No deduplication — duplicate stories may appear.',
-};
-
-function updateDedupModeDesc(mode) {
-  const el = document.getElementById('dedup-mode-desc');
-  if (el) el.textContent = DEDUP_MODE_DESC[mode] || DEDUP_MODE_DESC.pipeline;
-}
 let editingDraftId = null;
 let rejectDraftId = null;
 let scheduleDraftId = null;
@@ -670,43 +660,12 @@ document.getElementById('rejected-toggle').addEventListener('click', () => {
 
 // ── Settings ─────────────────────────────────────────────
 
-function renderFinnhubStatus(fh) {
-  const el = document.getElementById('finnhub-status');
-  if (!fh || !fh.configured && !fh.error && !fh.news) {
-    el.innerHTML = '<div class="status-row"><span>Status</span><span class="status-no">Not tested</span></div>';
-    return;
-  }
-  const rows = [];
-  if (fh.configured) {
-    rows.push(`<div class="status-row"><span>API key</span><span class="status-ok">Configured</span></div>`);
-  } else {
-    rows.push(`<div class="status-row"><span>API key</span><span class="status-no">Missing</span></div>`);
-  }
-  const fmt = (label, block) => {
-    if (!block) return '';
-    if (block.ok) return `<div class="status-row"><span>${label}</span><span class="status-ok">${block.count} items</span></div>`;
-    return `<div class="status-row"><span>${label}</span><span class="status-no">Failed</span></div>`;
-  };
-  rows.push(fmt('News', fh.news));
-  rows.push(fmt('Earnings', fh.earnings));
-  rows.push(fmt('Macro calendar', fh.macro));
-  rows.push(fmt('Company news', fh.company_news));
-  if (fh.error) {
-    rows.push(`<div class="pipeline-error">${esc(fh.error)}</div>`);
-  }
-  el.innerHTML = rows.join('');
-}
-
 async function loadSettings() {
   try {
     const data = await api('/settings');
     document.getElementById('pipeline-toggle').checked = data.pipeline_enabled;
     document.getElementById('daily-cap').value = data.daily_post_cap;
     document.getElementById('cooldown').value = data.cooldown_minutes;
-    const dedupMode = data.dedup_mode || 'pipeline';
-    document.getElementById('dedup-mode').value = dedupMode;
-    updateDedupModeDesc(dedupMode);
-    document.getElementById('allow-hashtags').checked = !!data.allow_hashtags;
     document.getElementById('push-enabled').checked = data.push_enabled !== false;
     watchlist = data.watchlist || [];
     renderWatchlist();
@@ -722,91 +681,49 @@ async function loadSettings() {
       pauseEl.classList.add('hidden');
     }
 
-    const cfg = data.config || {};
     const pipe = data.pipeline || {};
-    const sources = pipe.news_sources || [];
-    document.getElementById('news-sources').innerHTML = sources.map((s) => `
-      <div class="status-row">
-        <span>${esc(s.name)}</span>
-        <span class="${s.enabled ? 'status-ok' : 'status-no'}">${s.enabled ? 'On' : 'Off'}</span>
-      </div>
-      ${s.hint ? `<p class="source-hint">${esc(s.hint)}</p>` : ''}`).join('');
-
-    const bySource = pipe.last_ingest_by_source || {};
-    const sourceDetail = Object.entries(bySource)
-      .filter(([, n]) => n > 0)
-      .map(([name, n]) => `${name}: ${n}`)
-      .join(' · ');
-
-    const items = [
-      { label: 'Dry run', on: cfg.dry_run },
-      { label: 'Anthropic', on: cfg.anthropic_configured },
-      { label: 'OpenAI', on: cfg.openai_configured },
-      { label: 'Chat LLM', on: (data.chat?.provider || 'none') !== 'none' },
-      { label: 'X API', on: cfg.x_configured },
-      { label: 'Finnhub', on: cfg.finnhub_configured },
-    ];
-    document.getElementById('config-info').innerHTML = items.map((i) => `
-      <div class="status-row">
-        <span>${esc(i.label)}</span>
-        <span class="${i.on ? 'status-ok' : 'status-no'}">${i.on ? 'On' : 'Off'}</span>
-      </div>`).join('');
-
-    const lastRun = pipe.last_run_at ? formatDate(pipe.last_run_at) : 'Never';
+    const cfg = data.config || {};
     const sched = pipe.schedule || {};
+    const lastRun = pipe.last_run_at ? formatDate(pipe.last_run_at) : 'Never';
     let schedLabel;
     if (sched.quiet_hours) {
       schedLabel = `Quiet (${sched.quiet_window || '10pm–5am'})`;
-    } else if (sched.is_weekend) {
-      schedLabel = `Weekend (every ${sched.weekend_interval_hours || 3}h)`;
+    } else if (sched.earnings_window) {
+      schedLabel = `Earnings window (${sched.pipeline_interval_seconds || 120}s)`;
     } else if (sched.market_hours) {
       schedLabel = `Market hours (${sched.pipeline_interval_seconds || 120}s)`;
-    } else if (sched.next_mode === 'catchup') {
-      schedLabel = 'Catch-up at 5am';
+    } else if (sched.is_weekend) {
+      schedLabel = `Weekend (every ${sched.weekend_interval_hours || 3}h)`;
     } else {
-      schedLabel = 'Active (6am–10pm)';
+      schedLabel = 'Active';
     }
     const err = pipe.last_error ? `<div class="pipeline-error">${esc(pipe.last_error)}</div>` : '';
+    const earn = pipe.earnings || {};
+    let earnLine = '';
+    if (earn.configured === false) {
+      earnLine = '<div class="status-row"><span>Earnings</span><span class="status-no">Add FINNHUB_KEY</span></div>';
+    } else if (earn.reporting_today > 0) {
+      earnLine = `<div class="status-row"><span>Earnings today</span><span>${earn.reporting_today} on watchlist</span></div>`;
+    }
     document.getElementById('pipeline-status').innerHTML = `
       <div class="status-row">
         <span>Schedule</span>
-        <span>${esc(schedLabel)}${sched.timezone ? ` · ${esc(sched.timezone)}` : ''}</span>
+        <span>${esc(schedLabel)}</span>
       </div>
       <div class="status-row">
         <span>Last fetch</span>
         <span>${esc(lastRun)}</span>
       </div>
       <div class="status-row">
-        <span>New headlines</span>
-        <span>${pipe.last_ingest_count ?? 0}</span>
+        <span>Last cycle</span>
+        <span>${pipe.last_drafts_created ?? 0} drafts · ${pipe.last_ingest_count ?? 0} headlines</span>
       </div>
-      ${sourceDetail ? `<div class="pipeline-sources">${esc(sourceDetail)}</div>` : ''}
+      ${earnLine}
       <div class="status-row">
-        <span>Drafts created</span>
-        <span>${pipe.last_drafts_created ?? 0}</span>
+        <span>Finnhub</span>
+        <span class="${cfg.finnhub_configured ? 'status-ok' : 'status-no'}">${cfg.finnhub_configured ? 'Connected' : 'Not set'}</span>
       </div>
-      ${(() => {
-        const earn = pipe.earnings || {};
-        let html = '';
-        if (earn.configured === false) {
-          html += '<div class="status-row"><span>Earnings</span><span class="status-no">Needs FINNHUB_KEY</span></div>';
-        } else if (earn.watchlist_count > 0) {
-          html += `<div class="status-row"><span>Earnings today</span><span>${earn.reporting_today ?? 0} watchlist</span></div>`;
-        }
-        if (earn.upcoming?.length) {
-          const labels = earn.upcoming.slice(0, 4).map((e) => e.label || e.symbol).join(' · ');
-          html += `<div class="pipeline-sources">Upcoming: ${esc(labels)}</div>`;
-        }
-        if (earn.hint) {
-          html += `<p class="source-hint">${esc(earn.hint)}</p>`;
-        }
-        return html;
-      })()}
-      ${pipe.last_expired ? `<div class="status-row"><span>Expired stale</span><span>${pipe.last_expired}</span></div>` : ''}
-      ${(pipe.feedback?.learned_patterns ?? 0) > 0 ? `<div class="status-row"><span>Learned noise</span><span>${pipe.feedback.learned_patterns} patterns</span></div>` : ''}
       ${err}`;
-
-    renderFinnhubStatus(pipe.finnhub || data.finnhub);
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -863,39 +780,6 @@ document.getElementById('add-topic').addEventListener('click', () => {
   input.value = '';
 });
 
-document.getElementById('test-finnhub').addEventListener('click', async () => {
-  const btn = document.getElementById('test-finnhub');
-  btn.disabled = true;
-  btn.textContent = 'Testing…';
-  try {
-    const res = await api('/finnhub/test');
-    renderFinnhubStatus(res);
-    if (res.error) {
-      showToast(res.error, 'error');
-    } else {
-      showToast('Finnhub connected', 'success');
-    }
-    // Refresh config row
-    const cfg = await api('/settings');
-    const items = [
-      { label: 'Dry run', on: cfg.config?.dry_run },
-      { label: 'Anthropic', on: cfg.config?.anthropic_configured },
-      { label: 'X API', on: cfg.config?.x_configured },
-      { label: 'Finnhub', on: cfg.config?.finnhub_configured },
-    ];
-    document.getElementById('config-info').innerHTML = items.map((i) => `
-      <div class="status-row">
-        <span>${esc(i.label)}</span>
-        <span class="${i.on ? 'status-ok' : 'status-no'}">${i.on ? 'On' : 'Off'}</span>
-      </div>`).join('');
-  } catch (err) {
-    showToast(err.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Test Finnhub connection';
-  }
-});
-
 document.getElementById('fetch-now').addEventListener('click', async () => {
   const btn = document.getElementById('fetch-now');
   btn.disabled = true;
@@ -911,10 +795,7 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
     if (drafts) parts.push(`${drafts} new draft${drafts === 1 ? '' : 's'}`);
     if (res.last_expired) parts.push(`${res.last_expired} expired`);
     if (!ingested && !drafts) {
-      showToast(
-        'No new stories — queue unchanged. Reject old posts, clear samples, or add Topics.',
-        'success',
-      );
+      showToast('No new stories — add tickers to watchlist or try again later.', 'success');
     } else {
       showToast(parts.length ? parts.join(', ') : 'Fetch complete', 'success');
     }
@@ -928,24 +809,6 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('clear-samples').addEventListener('click', async () => {
-  const btn = document.getElementById('clear-samples');
-  btn.disabled = true;
-  try {
-    const res = await api('/drafts/clear-samples', { method: 'POST' });
-    showToast(res.cleared ? `Cleared ${res.cleared} sample draft(s)` : 'No sample drafts found', 'success');
-    if (isQueueTab()) loadQueue();
-  } catch (err) {
-    showToast(err.message, 'error');
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-document.getElementById('dedup-mode').addEventListener('change', (e) => {
-  updateDedupModeDesc(e.target.value);
-});
-
 document.getElementById('save-settings').addEventListener('click', async () => {
   try {
     await api('/settings', {
@@ -954,14 +817,25 @@ document.getElementById('save-settings').addEventListener('click', async () => {
         pipeline_enabled: document.getElementById('pipeline-toggle').checked,
         daily_post_cap: parseInt(document.getElementById('daily-cap').value),
         cooldown_minutes: parseInt(document.getElementById('cooldown').value),
-        dedup_mode: document.getElementById('dedup-mode').value,
-        allow_hashtags: document.getElementById('allow-hashtags').checked,
         push_enabled: document.getElementById('push-enabled').checked,
         watchlist,
         search_topics: searchTopics,
       }),
     });
     showToast('Settings saved', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+document.getElementById('resume-pipeline').addEventListener('click', async () => {
+  try {
+    await api('/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ paused_until: '' }),
+    });
+    showToast('Pipeline resumed', 'success');
+    loadSettings();
   } catch (err) {
     showToast(err.message, 'error');
   }

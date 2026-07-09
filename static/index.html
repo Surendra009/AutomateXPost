@@ -131,7 +131,7 @@
             <div class="row row-toggle">
               <div>
                 <div class="row-title">Enabled</div>
-                <div class="row-desc">Ingest news and create drafts</div>
+                <div class="row-desc">Ingest news and create drafts automatically</div>
               </div>
               <input type="checkbox" id="pipeline-toggle" class="switch" aria-label="Pipeline enabled">
             </div>
@@ -139,7 +139,45 @@
         </div>
 
         <div class="group">
-          <div class="group-label">Limits</div>
+          <div class="group-label">Watchlist</div>
+          <div class="group-card">
+            <p class="row-desc block">Tickers to prioritize — earnings previews and company news</p>
+            <div id="watchlist-chips" class="chips"></div>
+            <div class="add-row">
+              <input type="text" id="watchlist-input" class="input" placeholder="Add ticker" maxlength="5">
+              <button type="button" id="add-ticker" class="btn btn-secondary">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-label">Topics</div>
+          <div class="group-card">
+            <p class="row-desc block">Extra news topics to search each cycle</p>
+            <div id="topic-chips" class="chips"></div>
+            <div class="add-row">
+              <input type="text" id="topic-input" class="input" placeholder="e.g. semiconductor tariffs" maxlength="80">
+              <button type="button" id="add-topic" class="btn btn-secondary">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-label">Notifications</div>
+          <div class="group-card">
+            <div class="row row-toggle">
+              <div>
+                <div class="row-title">Push alerts</div>
+                <div class="row-desc">Notify when new drafts arrive</div>
+              </div>
+              <input type="checkbox" id="push-enabled" class="switch" aria-label="Push notifications">
+            </div>
+            <button type="button" id="enable-push" class="btn btn-secondary btn-block fetch-btn">Enable on this device</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-label">Posting</div>
           <div class="group-card">
             <div class="row">
               <label class="row-title" for="daily-cap">Daily cap</label>
@@ -152,114 +190,25 @@
                 <span>min</span>
               </div>
             </div>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="group-label">Posting</div>
-          <div class="group-card">
-            <div class="row row-toggle">
-              <div>
-                <div class="row-title">Allow hashtags</div>
-                <div class="row-desc">One topic tag on macro/earnings posts</div>
-              </div>
-              <input type="checkbox" id="allow-hashtags" class="switch" aria-label="Allow hashtags">
-            </div>
-            <div class="row row-toggle">
-              <div>
-                <div class="row-title">Push notifications</div>
-                <div class="row-desc">Alert when new drafts arrive</div>
-              </div>
-              <input type="checkbox" id="push-enabled" class="switch" aria-label="Push notifications">
-            </div>
-            <button type="button" id="enable-push" class="btn btn-secondary btn-block fetch-btn">Enable push on this device</button>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="group-label">Duplicates</div>
-          <div class="group-card">
-            <div class="row">
-              <label class="row-title" for="dedup-mode">Handling</label>
-              <select id="dedup-mode" class="input-compact select-compact" aria-label="Duplicate handling">
-                <option value="pipeline">Before draft</option>
-                <option value="queue">In queue only</option>
-                <option value="off">Off</option>
-              </select>
-            </div>
-            <p id="dedup-mode-desc" class="row-desc block muted-note">Block duplicate stories before drafting (saves API cost).</p>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="group-label">Watchlist</div>
-          <div class="group-card">
-            <p class="row-desc block">Prioritize news and earnings previews for these tickers (Finnhub)</p>
-            <div id="watchlist-chips" class="chips"></div>
-            <div class="add-row">
-              <input type="text" id="watchlist-input" class="input" placeholder="Add ticker" maxlength="5">
-              <button type="button" id="add-ticker" class="btn btn-secondary">Add</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="group-label">Topics</div>
-          <div class="group-card">
-            <p class="row-desc block">Search Google News for these topics each cycle</p>
-            <div id="topic-chips" class="chips"></div>
-            <div class="add-row">
-              <input type="text" id="topic-input" class="input" placeholder="e.g. semiconductor tariffs" maxlength="80">
-              <button type="button" id="add-topic" class="btn btn-secondary">Add</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="group-label">Pause</div>
-          <div class="group-card">
             <div class="pause-grid">
-              <button type="button" class="btn btn-secondary pause-btn" data-hours="1">1 hour</button>
-              <button type="button" class="btn btn-secondary pause-btn" data-hours="4">4 hours</button>
-              <button type="button" class="btn btn-secondary pause-btn" data-tomorrow="1">Tomorrow</button>
+              <button type="button" class="btn btn-secondary pause-btn" data-hours="1">Pause 1h</button>
+              <button type="button" class="btn btn-secondary pause-btn" data-hours="4">Pause 4h</button>
+              <button type="button" class="btn btn-secondary pause-btn" data-tomorrow="1">Until tomorrow</button>
+              <button type="button" class="btn btn-secondary" id="resume-pipeline">Resume</button>
             </div>
             <p id="pause-status" class="pause-note hidden"></p>
           </div>
         </div>
 
         <div class="group">
-          <div class="group-label">News sources</div>
-          <div class="group-card">
-            <div class="status-list" id="news-sources"></div>
-            <p class="row-desc block muted-note">Web search (primary), RSS, and optional Finnhub supplement. Articles fetched when drafting.</p>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="group-label">News feed</div>
+          <div class="group-label">Activity</div>
           <div class="group-card">
             <div class="status-list" id="pipeline-status"></div>
             <button type="button" id="fetch-now" class="btn btn-secondary btn-block fetch-btn">Fetch news now</button>
-            <button type="button" id="clear-samples" class="btn btn-secondary btn-block fetch-btn">Clear sample drafts</button>
-            <p class="row-desc block muted-note">Pulls latest headlines and creates drafts. Runs automatically every 5 min.</p>
-          </div>
-        </div>
-
-        <div class="group">
-          <div class="group-label">Finnhub</div>
-          <div class="group-card">
-            <div class="status-list" id="finnhub-status"></div>
-            <button type="button" id="test-finnhub" class="btn btn-secondary btn-block fetch-btn">Test Finnhub connection</button>
-            <p class="row-desc block muted-note">Variable name must be <strong>FINNHUB_KEY</strong>. Redeploy after adding it on Railway.</p>
           </div>
         </div>
 
         <button type="button" id="save-settings" class="btn btn-approve btn-block">Save settings</button>
-
-        <div class="group">
-          <div class="group-label">Status</div>
-          <div class="group-card status-list" id="config-info"></div>
-        </div>
       </section>
     </div>
 

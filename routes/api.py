@@ -456,7 +456,9 @@ def patch_settings(request: Request, body: SettingsPatch):
             seen.add(key)
             topics.append(topic[:80])
         set_setting("search_topics", topics)
-    if body.paused_until is not None:
+    if body.paused_until == "":
+        set_setting("paused_until", None)
+    elif body.paused_until is not None:
         set_setting("paused_until", body.paused_until)
     if body.dedup_mode is not None:
         from pipeline.dedup_mode import DEDUP_MODES
