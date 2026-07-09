@@ -1,9 +1,10 @@
-const CACHE_NAME = 'postpilot-v45';
+const CACHE_NAME = 'postpilot-v47';
 const SHELL = ['/', '/static/css/style.css', '/static/js/app.js', '/manifest.json'];
+const SHELL_PATHS = new Set(['/', '/manifest.json', '/static/css/style.css', '/static/js/app.js']);
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL))
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL).catch(() => undefined))
   );
   self.skipWaiting();
 });
@@ -17,8 +18,28 @@ self.addEventListener('activate', (e) => {
   self.clients.claim();
 });
 
+function networkFirst(request) {
+  return fetch(request)
+    .then((response) => {
+      if (response && response.ok) {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+      }
+      return response;
+    })
+    .catch(() => caches.match(request));
+}
+
 self.addEventListener('fetch', (e) => {
-  if (e.request.url.includes('/api/')) return;
+  if (e.request.method !== 'GET') return;
+  const url = new URL(e.request.url);
+  if (url.pathname.startsWith('/api/')) return;
+
+  if (SHELL_PATHS.has(url.pathname)) {
+    e.respondWith(networkFirst(e.request));
+    return;
+  }
+
   e.respondWith(
     caches.match(e.request).then((cached) => cached || fetch(e.request))
   );

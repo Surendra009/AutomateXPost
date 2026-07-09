@@ -140,7 +140,7 @@ async def run_pipeline_cycle(*, force: bool = False) -> dict:
 
 
 def trigger_pipeline_cycle(*, force: bool = False) -> dict:
-    """Start a pipeline cycle in the background; returns immediately."""
+    """Schedule a pipeline cycle on the running event loop; returns immediately."""
     global _manual_run_task
 
     if _pipeline_running:
@@ -152,7 +152,7 @@ def trigger_pipeline_cycle(*, force: bool = False) -> dict:
         except Exception as exc:
             logger.error("Background pipeline cycle failed: %s", exc, exc_info=True)
 
-    _manual_run_task = asyncio.create_task(_run())
+    _manual_run_task = asyncio.get_running_loop().create_task(_run())
     return {"started": True, "running": True}
 
 

@@ -453,7 +453,7 @@ def finnhub_test(request: Request):
 
 
 @router.post("/pipeline/run", status_code=202)
-def pipeline_run(request: Request):
+async def pipeline_run(request: Request):
     require_auth(request)
     check_action_rate_limit(request, "pipeline", max_calls=10, window_seconds=60)
     status = get_pipeline_status()

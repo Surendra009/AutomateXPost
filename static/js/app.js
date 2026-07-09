@@ -8,20 +8,29 @@ let rejectDraftId = null;
 let scheduleDraftId = null;
 let rejectionReasons = [];
 let watchlist = [];
+let searchTopics = [];
 let queueData = { drafts: [], counts: { stock: 0, politics: 0 }, hidden_duplicates: 0 };
 
 // ── API helpers ──────────────────────────────────────────
 
-async function api(path, opts = {}) {
+async function api(path, opts = {}, timeoutMs = 60000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try {
     res = await fetch(`${API}${path}`, {
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...opts.headers },
+      signal: controller.signal,
       ...opts,
     });
-  } catch {
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error('Request timed out — server may be busy, try again');
+    }
     throw new Error('Network error — check your connection and try again');
+  } finally {
+    clearTimeout(timer);
   }
   if (res.status === 401) {
     showLogin();
@@ -77,7 +86,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 
 async function checkAuth() {
   try {
-    await api('/me');
+    await api('/me', {}, 15000);
     showApp();
   } catch {
     showLogin();
@@ -1086,9 +1095,13 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=45').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=47').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────
 
-checkAuth();
+try {
+  checkAuth();
+} catch {
+  showLogin();
+}
