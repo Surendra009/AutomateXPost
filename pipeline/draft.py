@@ -11,6 +11,12 @@ from models import Draft, Headline
 from pipeline.ai_news import infer_ai_tickers
 from pipeline.draft_budget import DraftBudget
 from pipeline.dedup import was_recently_drafted
+from pipeline.earnings_dedup import (
+    earnings_ticker_blocked,
+    extract_ticker_from_text,
+    headline_looks_like_earnings,
+    primary_ticker,
+)
 from pipeline.classify_cache import get_cached_classification
 from pipeline.enrich import get_article_text_for_draft
 from pipeline.feedback import drafter_feedback_hints
@@ -179,6 +185,16 @@ def _commit_draft(
 ) -> bool:
     if not text or not _passes_style_check(text, fmt):
         return False
+
+    cat = category or classification.get("category", "other")
+    ticker_str = ",".join(tickers) if tickers else ""
+    symbol = primary_ticker(ticker_str) or extract_ticker_from_text(ticker_str or headline.title)
+    if symbol and (
+        cat == "earnings"
+        or (headline_looks_like_earnings(headline.title, headline.summary) and cat != "macro")
+    ):
+        if earnings_ticker_blocked(symbol):
+            return False
 
     with get_session() as session:
         draft = Draft(

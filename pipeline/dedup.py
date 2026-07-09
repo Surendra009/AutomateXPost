@@ -10,6 +10,12 @@ from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
 from pipeline.dedup_mode import dedup_before_draft
+from pipeline.earnings_dedup import (
+    earnings_ticker_blocked,
+    extract_ticker_from_text,
+    headline_looks_like_earnings,
+    tickers_from_field,
+)
 from pipeline.story_key import normalize_title, story_fingerprint, title_fingerprint
 
 logger = setup_logging()
@@ -48,6 +54,7 @@ def story_has_active_draft(title: str) -> bool:
     """True if this story already has a pending or scheduled draft in the queue."""
     cross_fp = title_fingerprint(title)
     norm = normalize_title(title)
+    earnings_symbol = extract_ticker_from_text(title) if headline_looks_like_earnings(title) else None
 
     with get_session() as session:
         rows = session.exec(
@@ -57,6 +64,9 @@ def story_has_active_draft(title: str) -> bool:
         ).all()
 
         for _draft, headline in rows:
+            if earnings_symbol and _draft.category == "earnings":
+                if earnings_symbol in tickers_from_field(_draft.tickers):
+                    return True
             if _title_fp_for_headline(headline) == cross_fp:
                 return True
             if _hooks_match(title, _draft.text):
@@ -94,6 +104,12 @@ def was_recently_drafted(title: str, source: str, hours: int | None = None) -> b
     """True if this story (including cross-source matches) got a draft recently."""
     if not dedup_before_draft():
         return False
+
+    if headline_looks_like_earnings(title):
+        symbol = extract_ticker_from_text(title)
+        if symbol and earnings_ticker_blocked(symbol):
+            return True
+
     if story_has_active_draft(title):
         return True
 

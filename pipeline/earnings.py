@@ -16,6 +16,7 @@ from config import (
 )
 from pipeline.dedup import was_recently_drafted
 from pipeline.draft_budget import DraftBudget
+from pipeline.earnings_dedup import earnings_ticker_blocked, expire_earnings_previews_for_ticker
 from pipeline.earnings_freshness import estimate_earnings_release_utc, is_earnings_fresh
 from pipeline.earnings_parse import (
     EarningsFacts,
@@ -306,6 +307,11 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                 if was_recently_drafted(title, EARNINGS_SOURCE):
                     continue
 
+                expire_earnings_previews_for_ticker(symbol)
+                if earnings_ticker_blocked(symbol, results_only=True):
+                    logger.debug("Skipping duplicate earnings result for %s", symbol)
+                    continue
+
                 release_at = estimate_earnings_release_utc(
                     date_str, event.get("hour"), has_actuals=True
                 )
@@ -366,6 +372,8 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
             if _headline_exists(chash) or _pending_draft_for_hash(chash):
                 continue
             if was_recently_drafted(title, EARNINGS_SOURCE):
+                continue
+            if earnings_ticker_blocked(symbol):
                 continue
 
             release_at = estimate_earnings_release_utc(date_str, event.get("hour")) or now

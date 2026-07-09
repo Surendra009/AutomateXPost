@@ -8,11 +8,19 @@ from sqlmodel import select
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
+from pipeline.earnings_dedup import earnings_group_key
 from pipeline.story_key import normalize_title, title_fingerprint
 
 logger = setup_logging()
 
 _QUEUE_FUZZY_THRESHOLD = 85
+
+
+def _group_key(draft: Draft, headline: Headline) -> str:
+    earnings_key = earnings_group_key(draft)
+    if earnings_key:
+        return earnings_key
+    return _story_key(headline)
 
 
 def _story_key(headline: Headline) -> str:
@@ -48,6 +56,10 @@ def _merge_fuzzy_groups(
     for key_a in keys:
         if key_a in used:
             continue
+        if key_a.startswith("earnings:"):
+            merged[key_a] = list(groups[key_a])
+            used.add(key_a)
+            continue
         combined = list(groups[key_a])
         rep_title = normalize_title(groups[key_a][0][1].title)
 
@@ -82,7 +94,7 @@ def dedupe_pending_drafts(
 
     groups: dict[str, list[tuple[Draft, Headline]]] = {}
     for pair in pairs:
-        key = _story_key(pair[1])
+        key = _group_key(pair[0], pair[1])
         groups.setdefault(key, []).append(pair)
 
     groups = _merge_fuzzy_groups(groups)

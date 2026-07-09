@@ -13,6 +13,7 @@ from pipeline.ai_news import (
     is_ai_source,
     is_material_ai_update,
 )
+from pipeline.earnings_dedup import earnings_ticker_blocked
 from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts
 from pipeline.enrich import fetch_article_text
 
@@ -166,6 +167,8 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
 
     verb = _beat_miss_verb(bm)
     ticker = tickers[0]
+    if earnings_ticker_blocked(ticker):
+        return None
     facts = extract_earnings_facts(text)
     article = ""
     if headline.url:
