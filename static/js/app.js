@@ -667,6 +667,18 @@ async function loadSettings() {
     document.getElementById('daily-cap').value = data.daily_post_cap;
     document.getElementById('cooldown').value = data.cooldown_minutes;
     document.getElementById('push-enabled').checked = data.push_enabled !== false;
+    document.getElementById('teams-enabled').checked = data.teams_enabled !== false;
+    const teamsDesc = document.getElementById('teams-status-desc');
+    const teamsOk = data.teams?.configured || data.config?.teams_configured;
+    if (teamsDesc) {
+      teamsDesc.textContent = teamsOk
+        ? 'Post new drafts to your Teams channel'
+        : 'Set TEAMS_WEBHOOK_URL on Railway, then redeploy';
+    }
+    const testTeamsBtn = document.getElementById('test-teams');
+    if (testTeamsBtn) {
+      testTeamsBtn.disabled = !teamsOk;
+    }
     watchlist = data.watchlist || [];
     renderWatchlist();
     searchTopics = data.search_topics || [];
@@ -818,6 +830,7 @@ document.getElementById('save-settings').addEventListener('click', async () => {
         daily_post_cap: parseInt(document.getElementById('daily-cap').value),
         cooldown_minutes: parseInt(document.getElementById('cooldown').value),
         push_enabled: document.getElementById('push-enabled').checked,
+        teams_enabled: document.getElementById('teams-enabled').checked,
         watchlist,
         search_topics: searchTopics,
       }),
@@ -988,6 +1001,21 @@ async function subscribePush() {
     showToast(err.message || 'Push setup failed', 'error');
   }
 }
+
+document.getElementById('test-teams').addEventListener('click', async () => {
+  const btn = document.getElementById('test-teams');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    await api('/teams/test', { method: 'POST' });
+    showToast('Test message sent to Teams', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test Teams connection';
+  }
+});
 
 document.getElementById('enable-push').addEventListener('click', subscribePush);
 

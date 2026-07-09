@@ -168,11 +168,19 @@
             <div class="row row-toggle">
               <div>
                 <div class="row-title">Push alerts</div>
-                <div class="row-desc">Notify when new drafts arrive</div>
+                <div class="row-desc">Browser notification on this device</div>
               </div>
               <input type="checkbox" id="push-enabled" class="switch" aria-label="Push notifications">
             </div>
-            <button type="button" id="enable-push" class="btn btn-secondary btn-block fetch-btn">Enable on this device</button>
+            <button type="button" id="enable-push" class="btn btn-secondary btn-block fetch-btn">Enable push on this device</button>
+            <div class="row row-toggle">
+              <div>
+                <div class="row-title">Microsoft Teams</div>
+                <div class="row-desc" id="teams-status-desc">Post new drafts to a Teams channel</div>
+              </div>
+              <input type="checkbox" id="teams-enabled" class="switch" aria-label="Microsoft Teams notifications">
+            </div>
+            <button type="button" id="test-teams" class="btn btn-secondary btn-block fetch-btn">Test Teams connection</button>
           </div>
         </div>
 

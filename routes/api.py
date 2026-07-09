@@ -29,6 +29,7 @@ from pipeline.freshness import discard_stale_headlines, format_age, age_minutes,
 from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.post import PostingError, get_today_stats, publish_draft
 from pipeline.push import get_vapid_public_key, push_configured, remove_subscription, save_subscription
+from pipeline.teams import send_teams_test_message, teams_configured
 from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
 from pipeline.dedup_mode import DEDUP_MODE_LABELS, get_dedup_mode
 from pipeline.queue_dedup import dedupe_pending_drafts
@@ -72,6 +73,7 @@ class SettingsPatch(BaseModel):
     dedup_mode: Optional[str] = None
     allow_hashtags: Optional[bool] = None
     push_enabled: Optional[bool] = None
+    teams_enabled: Optional[bool] = None
 
 
 def _draft_to_dict(draft: Draft, headline: Headline | None) -> dict:
@@ -373,6 +375,9 @@ def get_settings_route(request: Request):
         "configured": push_configured(),
         "public_key": get_vapid_public_key() if push_configured() else None,
     }
+    settings["teams"] = {
+        "configured": teams_configured(),
+    }
     settings["chat"] = chat_llm_status()
     return settings
 
@@ -396,6 +401,19 @@ def push_subscribe(request: Request, body: PushSubscribeRequest):
 def push_unsubscribe(request: Request, body: PushSubscribeRequest):
     require_auth(request)
     remove_subscription(body.endpoint)
+    return {"ok": True}
+
+
+@router.post("/teams/test")
+def teams_test(request: Request):
+    require_auth(request)
+    if not teams_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Teams not configured — set TEAMS_WEBHOOK_URL on Railway and redeploy",
+        )
+    if not send_teams_test_message():
+        raise HTTPException(status_code=502, detail="Teams webhook request failed")
     return {"ok": True}
 
 
@@ -470,4 +488,6 @@ def patch_settings(request: Request, body: SettingsPatch):
         set_setting("allow_hashtags", body.allow_hashtags)
     if body.push_enabled is not None:
         set_setting("push_enabled", body.push_enabled)
+    if body.teams_enabled is not None:
+        set_setting("teams_enabled", body.teams_enabled)
     return get_all_settings()

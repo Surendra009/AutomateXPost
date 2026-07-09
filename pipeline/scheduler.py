@@ -41,6 +41,7 @@ from pipeline.sec_filings import clear_sec_feed_cache, process_sec_filings
 from pipeline.scheduled_posts import process_scheduled_posts
 from pipeline.earnings_calendar import get_earnings_pipeline_summary
 from pipeline.push import notify_new_drafts
+from pipeline.teams import notify_teams_new_drafts
 
 logger = setup_logging()
 
@@ -152,6 +153,7 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
     ingest_count = 0
     expired = 0
     budget = DraftBudget()
+    cycle_start = datetime.utcnow()
 
     try:
         with cycle_max_news_age(decision.max_news_age_hours):
@@ -231,6 +233,7 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
 
             if budget.created:
                 notify_new_drafts(budget.created)
+                notify_teams_new_drafts(cycle_start)
 
             check_pipeline_health(budget.created, None)
             refresh_post_metrics()
