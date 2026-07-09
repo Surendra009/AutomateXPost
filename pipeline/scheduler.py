@@ -48,6 +48,7 @@ logger = setup_logging()
 
 _pipeline_task: asyncio.Task | None = None
 _scheduled_task: asyncio.Task | None = None
+_manual_run_task: asyncio.Task | None = None
 _pipeline_running = False
 
 
@@ -136,6 +137,23 @@ def _save_cycle_stats(
 async def run_pipeline_cycle(*, force: bool = False) -> dict:
     """Single pipeline cycle: expire → ingest → structured drafts → filter → LLM draft."""
     return await asyncio.to_thread(_run_pipeline_cycle, force=force)
+
+
+def trigger_pipeline_cycle(*, force: bool = False) -> dict:
+    """Start a pipeline cycle in the background; returns immediately."""
+    global _manual_run_task
+
+    if _pipeline_running:
+        return {"started": False, "reason": "already_running", **get_pipeline_status()}
+
+    async def _run() -> None:
+        try:
+            await run_pipeline_cycle(force=force)
+        except Exception as exc:
+            logger.error("Background pipeline cycle failed: %s", exc, exc_info=True)
+
+    _manual_run_task = asyncio.create_task(_run())
+    return {"started": True, "running": True}
 
 
 def _run_pipeline_cycle(*, force: bool = False) -> dict:

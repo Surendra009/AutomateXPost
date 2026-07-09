@@ -31,7 +31,7 @@ from pipeline.post import PostingError, get_today_stats, publish_draft
 from pipeline.discord import send_discord_test_message, discord_configured
 from pipeline.llm_providers import llm_status
 from pipeline.teams import send_teams_test_message, teams_configured
-from pipeline.scheduler import get_pipeline_status, run_pipeline_cycle
+from pipeline.scheduler import get_pipeline_status, trigger_pipeline_cycle
 from pipeline.dedup_mode import DEDUP_MODE_LABELS, get_dedup_mode
 from pipeline.queue_dedup import dedupe_pending_drafts
 from pipeline.stale import expire_stale_drafts
@@ -452,14 +452,14 @@ def finnhub_test(request: Request):
     return result
 
 
-@router.post("/pipeline/run")
-async def pipeline_run(request: Request):
+@router.post("/pipeline/run", status_code=202)
+def pipeline_run(request: Request):
     require_auth(request)
     check_action_rate_limit(request, "pipeline", max_calls=10, window_seconds=60)
     status = get_pipeline_status()
     if status["running"]:
         raise HTTPException(status_code=409, detail="Pipeline is already running")
-    return await run_pipeline_cycle(force=True)
+    return trigger_pipeline_cycle(force=True)
 
 
 @router.post("/analytics/refresh")

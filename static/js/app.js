@@ -13,11 +13,16 @@ let queueData = { drafts: [], counts: { stock: 0, politics: 0 }, hidden_duplicat
 // ── API helpers ──────────────────────────────────────────
 
 async function api(path, opts = {}) {
-  const res = await fetch(`${API}${path}`, {
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...opts.headers },
-    ...opts,
-  });
+  let res;
+  try {
+    res = await fetch(`${API}${path}`, {
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...opts.headers },
+      ...opts,
+    });
+  } catch {
+    throw new Error('Network error — check your connection and try again');
+  }
   if (res.status === 401) {
     showLogin();
     throw new Error('Unauthorized');
@@ -25,6 +30,20 @@ async function api(path, opts = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
   return data;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForPipelineDone(maxMs = 300000) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    await sleep(2000);
+    const status = await api('/pipeline/status');
+    if (!status.running) return status;
+  }
+  throw new Error('Fetch is still running — check Activity in a minute');
 }
 
 // ── Auth ─────────────────────────────────────────────────
@@ -805,7 +824,17 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Fetching…';
   try {
-    const res = await api('/pipeline/run', { method: 'POST' });
+    const start = await api('/pipeline/run', { method: 'POST' });
+    if (!start.started) {
+      showToast('Pipeline is already running', 'error');
+      return;
+    }
+    const res = await waitForPipelineDone();
+    if (res.last_error) {
+      showToast(`Fetch failed: ${res.last_error}`, 'error');
+      loadSettings();
+      return;
+    }
     const ingested = res.last_ingest_count || 0;
     const drafts = res.last_drafts_created || 0;
     const filtered = res.last_filter_kept || 0;
