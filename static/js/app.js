@@ -454,7 +454,7 @@ function renderDraftCard(d) {
           <button class="btn btn-approve btn-block" data-action="approve" data-id="${d.id}">Approve &amp; post</button>
           <div class="post-actions-row three-col">
             <button class="btn btn-secondary" data-action="schedule" data-id="${d.id}">Schedule</button>
-            <button class="btn btn-edit" data-action="regenerate" data-id="${d.id}">Retry</button>
+            <button class="btn btn-edit" data-action="regenerate" data-id="${d.id}">Rewrite</button>
             <button class="btn btn-edit" data-action="edit" data-id="${d.id}">Edit</button>
           </div>
           <div class="post-actions-row">
@@ -534,7 +534,7 @@ async function handleCardAction(e) {
   } else if (action === 'regenerate') {
     btn.disabled = true;
     try {
-      await api(`/drafts/${id}/regenerate`, { method: 'POST' });
+      await api(`/drafts/${id}/regenerate`, { method: 'POST' }, 120000);
       showToast('New draft generated', 'success');
       loadQueue();
     } catch (err) {
@@ -1095,7 +1095,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=47').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=48').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

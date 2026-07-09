@@ -109,6 +109,28 @@ def _build_draft_prompt(headline: Headline, classification: dict, article_text: 
     return "\n\n".join(parts)
 
 
+def _build_regenerate_prompt(
+    headline: Headline,
+    classification: dict,
+    article_text: str,
+    existing_text: str,
+    *,
+    attempt: int = 0,
+) -> str:
+    base = _build_draft_prompt(headline, classification, article_text)
+    extra = [
+        "The user tapped REWRITE on an existing draft. You MUST return skip=false.",
+        "Produce a fresh multi-line post (3–4 substantive lines, then $TICKER on its own line).",
+        f"Current draft to improve (do not copy verbatim):\n{existing_text}",
+    ]
+    if attempt > 0:
+        extra.append(
+            "Previous rewrite failed validation. Use clear line breaks, at least 3 content lines, "
+            "and put cashtags only on the final line."
+        )
+    return base + "\n\n" + "\n\n".join(extra)
+
+
 def _parse_draft_response(raw: str) -> dict | None:
     parsed = _parse_json_array(raw)
     if parsed:
@@ -321,7 +343,7 @@ def draft_posts(
     return created
 
 
-def _passes_style_check(text: str, fmt: str) -> bool:
+def _passes_style_check(text: str, fmt: str, *, relaxed: bool = False) -> bool:
     limit = MAX_CHARS.get(fmt, 320)
     if len(text) > limit + 60:
         return False
@@ -336,7 +358,8 @@ def _passes_style_check(text: str, fmt: str) -> bool:
         return False
 
     lines = [ln for ln in text.split("\n") if ln.strip()]
-    if len(lines) < 3:
+    min_lines = 2 if relaxed else 3
+    if len(lines) < min_lines:
         return False
 
     if "\n" not in text and len(text) > 140:
@@ -376,15 +399,17 @@ def _is_headline_echo(text: str, title: str) -> bool:
     return fuzz.ratio(flat, normalized_title) > 75
 
 
-def regenerate_draft(draft_id: int) -> Draft | None:
+def regenerate_draft(draft_id: int) -> tuple[Draft | None, str | None]:
     """Rewrite a pending draft with a fresh LLM pass (same headline)."""
     with get_session() as session:
         draft = session.get(Draft, draft_id)
         if not draft or draft.status not in ("pending", "scheduled"):
-            return None
+            return None, "Draft not found or not editable"
         headline = session.get(Headline, draft.headline_id)
         if not headline:
-            return None
+            return None, "Headline missing for this draft"
+        existing_text = draft.text or ""
+        draft_format = draft.format
 
     classification = get_cached_classification(headline.title, headline.source) or {
         "category": draft.category,
@@ -393,37 +418,60 @@ def regenerate_draft(draft_id: int) -> Draft | None:
         "relevant": True,
     }
     article_text = get_article_text_for_draft(headline, classification)
-    prompt = _build_draft_prompt(headline, classification, article_text)
-    raw = call_llm(
-        DRAFT_SYSTEM_PROMPT,
-        prompt,
-        model=DRAFT_MODEL,
-        provider=DRAFT_PROVIDER,
-        max_tokens=DRAFT_MAX_TOKENS,
-    )
-    if not raw:
-        return None
+    last_reason = "LLM request failed"
 
-    draft_data = _parse_draft_response(raw)
-    if not draft_data or draft_data.get("skip"):
-        return None
+    for attempt in range(3):
+        prompt = _build_regenerate_prompt(
+            headline,
+            classification,
+            article_text,
+            existing_text,
+            attempt=attempt,
+        )
+        raw = call_llm(
+            DRAFT_SYSTEM_PROMPT,
+            prompt,
+            model=DRAFT_MODEL,
+            provider=DRAFT_PROVIDER,
+            max_tokens=DRAFT_MAX_TOKENS,
+            retry=attempt == 0,
+        )
+        if not raw:
+            last_reason = "LLM request failed — check DeepSeek key and Railway logs"
+            continue
 
-    tickers = _resolve_tickers(draft_data, classification, headline)
-    fmt = draft_data.get("format", draft.format)
-    text = _normalize_post(draft_data.get("text", "").strip(), tickers)
-    if not text or not _passes_style_check(text, fmt):
-        return None
+        draft_data = _parse_draft_response(raw)
+        if not draft_data:
+            last_reason = "Could not parse LLM response"
+            continue
 
-    with get_session() as session:
-        row = session.get(Draft, draft_id)
-        if not row:
-            return None
-        row.text = text
-        row.format = fmt
-        row.tickers = ",".join(tickers) if tickers else row.tickers
-        row.confidence = float(draft_data.get("confidence", row.confidence))
-        row.post_error = None
-        session.add(row)
-        session.commit()
-        session.refresh(row)
-        return row
+        if draft_data.get("skip"):
+            last_reason = draft_data.get("skip_reason") or "Model declined to rewrite"
+            continue
+
+        tickers = _resolve_tickers(draft_data, classification, headline)
+        fmt = draft_data.get("format", draft_format)
+        text = _normalize_post(draft_data.get("text", "").strip(), tickers)
+        relaxed = attempt > 0
+        if not text:
+            last_reason = "Model returned empty text"
+            continue
+        if not _passes_style_check(text, fmt, relaxed=relaxed):
+            last_reason = "Rewrite did not pass style checks — try again"
+            continue
+
+        with get_session() as session:
+            row = session.get(Draft, draft_id)
+            if not row:
+                return None, "Draft disappeared during rewrite"
+            row.text = text
+            row.format = fmt
+            row.tickers = ",".join(tickers) if tickers else row.tickers
+            row.confidence = float(draft_data.get("confidence", row.confidence))
+            row.post_error = None
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return row, None
+
+    return None, last_reason

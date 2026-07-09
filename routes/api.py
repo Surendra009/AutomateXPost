@@ -289,9 +289,9 @@ def reject_draft(draft_id: int, request: Request, body: RejectRequest = RejectRe
 @router.post("/drafts/{draft_id}/regenerate")
 def regenerate_draft_route(draft_id: int, request: Request):
     require_auth(request)
-    draft = regenerate_draft(draft_id)
+    draft, err = regenerate_draft(draft_id)
     if not draft:
-        raise HTTPException(status_code=400, detail="Could not regenerate draft")
+        raise HTTPException(status_code=400, detail=err or "Could not regenerate draft")
     with get_session() as session:
         headline = session.get(Headline, draft.headline_id)
     return {"ok": True, "draft": _draft_to_dict(draft, headline)}
