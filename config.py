@@ -10,6 +10,7 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
+APP_BUILD = os.getenv("APP_BUILD", "44")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
@@ -174,6 +175,7 @@ def get_settings():
         "alert_webhook_configured": bool(ALERT_WEBHOOK_URL),
         "teams_configured": bool(TEAMS_WEBHOOK_URL),
         "discord_configured": bool(DISCORD_WEBHOOK_URL),
+        "build": APP_BUILD,
     }
 
 

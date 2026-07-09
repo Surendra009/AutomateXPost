@@ -732,6 +732,10 @@ async function loadSettings() {
       </div>
       ${earnLine}
       <div class="status-row">
+        <span>Build</span>
+        <span>${esc(cfg.build || '—')}</span>
+      </div>
+      <div class="status-row">
         <span>Finnhub</span>
         <span class="${cfg.finnhub_configured ? 'status-ok' : 'status-no'}">${cfg.finnhub_configured ? 'Connected' : 'Not set'}</span>
       </div>
@@ -1049,7 +1053,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=44').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

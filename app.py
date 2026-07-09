@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import PIPELINE_INTERVAL_SECONDS, STATIC_DIR, get_settings, run_security_checks
+from config import APP_BUILD, PIPELINE_INTERVAL_SECONDS, STATIC_DIR, get_settings, run_security_checks
 from database import init_db
 from logging_config import setup_logging
 from pipeline.scheduler import start_pipeline, stop_pipeline
@@ -57,7 +57,12 @@ async def security_headers_middleware(request: Request, call_next):
 @app.get("/", response_class=HTMLResponse)
 async def index():
     html_path = STATIC_DIR / "index.html"
-    return HTMLResponse(content=html_path.read_text())
+    html = html_path.read_text()
+    html = html.replace("{{APP_BUILD}}", APP_BUILD)
+    return HTMLResponse(
+        content=html,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/manifest.json")
@@ -67,7 +72,7 @@ async def manifest():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "build": APP_BUILD}
 
 
 @app.get("/sw.js")
@@ -75,7 +80,10 @@ async def service_worker():
     return FileResponse(
         STATIC_DIR / "sw.js",
         media_type="application/javascript",
-        headers={"Service-Worker-Allowed": "/"},
+        headers={
+            "Service-Worker-Allowed": "/",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        },
     )
 
 
