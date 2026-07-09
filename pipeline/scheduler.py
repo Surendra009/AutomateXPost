@@ -40,6 +40,7 @@ from pipeline.schedule import (
 from pipeline.sec_filings import clear_sec_feed_cache, process_sec_filings
 from pipeline.scheduled_posts import process_scheduled_posts
 from pipeline.earnings_calendar import get_earnings_pipeline_summary
+from pipeline.discord import notify_discord_new_drafts
 from pipeline.push import notify_new_drafts
 from pipeline.teams import notify_teams_new_drafts
 
@@ -233,6 +234,7 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
 
             if budget.created:
                 notify_new_drafts(budget.created)
+                notify_discord_new_drafts(cycle_start)
                 notify_teams_new_drafts(cycle_start)
 
             check_pipeline_health(budget.created, None)

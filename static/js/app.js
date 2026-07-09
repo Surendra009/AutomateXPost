@@ -667,17 +667,17 @@ async function loadSettings() {
     document.getElementById('daily-cap').value = data.daily_post_cap;
     document.getElementById('cooldown').value = data.cooldown_minutes;
     document.getElementById('push-enabled').checked = data.push_enabled !== false;
-    document.getElementById('teams-enabled').checked = data.teams_enabled !== false;
-    const teamsDesc = document.getElementById('teams-status-desc');
-    const teamsOk = data.teams?.configured || data.config?.teams_configured;
-    if (teamsDesc) {
-      teamsDesc.textContent = teamsOk
-        ? 'Post new drafts to your Teams channel'
-        : 'Set TEAMS_WEBHOOK_URL on Railway, then redeploy';
+    document.getElementById('discord-enabled').checked = data.discord_enabled !== false;
+    const discordDesc = document.getElementById('discord-status-desc');
+    const discordOk = data.discord?.configured || data.config?.discord_configured;
+    if (discordDesc) {
+      discordDesc.textContent = discordOk
+        ? 'Post new drafts to your Discord channel'
+        : 'Set DISCORD_WEBHOOK_URL on Railway, then redeploy';
     }
-    const testTeamsBtn = document.getElementById('test-teams');
-    if (testTeamsBtn) {
-      testTeamsBtn.disabled = !teamsOk;
+    const testDiscordBtn = document.getElementById('test-discord');
+    if (testDiscordBtn) {
+      testDiscordBtn.disabled = !discordOk;
     }
     watchlist = data.watchlist || [];
     renderWatchlist();
@@ -830,7 +830,7 @@ document.getElementById('save-settings').addEventListener('click', async () => {
         daily_post_cap: parseInt(document.getElementById('daily-cap').value),
         cooldown_minutes: parseInt(document.getElementById('cooldown').value),
         push_enabled: document.getElementById('push-enabled').checked,
-        teams_enabled: document.getElementById('teams-enabled').checked,
+        discord_enabled: document.getElementById('discord-enabled').checked,
         watchlist,
         search_topics: searchTopics,
       }),
@@ -1002,18 +1002,18 @@ async function subscribePush() {
   }
 }
 
-document.getElementById('test-teams').addEventListener('click', async () => {
-  const btn = document.getElementById('test-teams');
+document.getElementById('test-discord').addEventListener('click', async () => {
+  const btn = document.getElementById('test-discord');
   btn.disabled = true;
   btn.textContent = 'Sending…';
   try {
-    await api('/teams/test', { method: 'POST' });
-    showToast('Test message sent to Teams', 'success');
+    await api('/discord/test', { method: 'POST' });
+    showToast('Test message sent to Discord', 'success');
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Test Teams connection';
+    btn.textContent = 'Test Discord connection';
   }
 });
 

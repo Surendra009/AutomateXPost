@@ -99,8 +99,10 @@ ENABLE_POST_MEDIA = os.getenv("ENABLE_POST_MEDIA", "true").lower() in ("1", "tru
 ANALYTICS_REFRESH_HOURS = int(os.getenv("ANALYTICS_REFRESH_HOURS", "6"))
 ALERT_WEBHOOK_URL = getenv_secret("ALERT_WEBHOOK_URL")
 TEAMS_WEBHOOK_URL = getenv_secret("TEAMS_WEBHOOK_URL")
+DISCORD_WEBHOOK_URL = getenv_secret("DISCORD_WEBHOOK_URL")
 APP_BASE_URL = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
-MAX_TEAMS_DRAFTS_PER_CYCLE = int(os.getenv("MAX_TEAMS_DRAFTS_PER_CYCLE", "3"))
+MAX_CHANNEL_DRAFTS_PER_CYCLE = int(os.getenv("MAX_CHANNEL_DRAFTS_PER_CYCLE", "3"))
+MAX_TEAMS_DRAFTS_PER_CYCLE = MAX_CHANNEL_DRAFTS_PER_CYCLE  # backwards compat
 VAPID_PUBLIC_KEY = getenv_secret("VAPID_PUBLIC_KEY")
 VAPID_PRIVATE_KEY = getenv_secret("VAPID_PRIVATE_KEY")
 VAPID_CLAIMS_EMAIL = os.getenv("VAPID_CLAIMS_EMAIL", "mailto:admin@postpilot.local")
@@ -154,7 +156,8 @@ DEFAULT_SETTINGS = {
     "dedup_mode": "pipeline",
     "allow_hashtags": False,
     "push_enabled": True,
-    "teams_enabled": True,
+    "discord_enabled": True,
+    "teams_enabled": False,
 }
 
 
@@ -170,6 +173,7 @@ def get_settings():
         "push_configured": bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY),
         "alert_webhook_configured": bool(ALERT_WEBHOOK_URL),
         "teams_configured": bool(TEAMS_WEBHOOK_URL),
+        "discord_configured": bool(DISCORD_WEBHOOK_URL),
     }
 
 

@@ -5,12 +5,12 @@ from __future__ import annotations
 from datetime import datetime
 
 import httpx
-from sqlmodel import select
 
-from config import APP_BASE_URL, MAX_TEAMS_DRAFTS_PER_CYCLE, TEAMS_WEBHOOK_URL
-from database import get_session, get_setting
+from config import APP_BASE_URL, TEAMS_WEBHOOK_URL
+from database import get_setting
 from logging_config import setup_logging
 from models import Draft, Headline
+from pipeline.channel_notify import drafts_since
 
 logger = setup_logging()
 
@@ -75,12 +75,10 @@ def _post_to_teams(payload: dict) -> bool:
 
 
 def send_draft_to_teams(draft: Draft, headline: Headline | None) -> bool:
-    """Post one draft as a Teams MessageCard."""
     return _post_to_teams(_format_draft_card(draft, headline))
 
 
 def send_teams_test_message() -> bool:
-    """Verify the Teams webhook accepts messages."""
     payload = {
         "@type": "MessageCard",
         "@context": "https://schema.org/extensions",
@@ -96,43 +94,11 @@ def send_teams_test_message() -> bool:
     return _post_to_teams(payload)
 
 
-def _drafts_since(since: datetime, limit: int) -> list[tuple[Draft, Headline | None]]:
-    with get_session() as session:
-        drafts = list(
-            session.exec(
-                select(Draft)
-                .where(Draft.status == "pending", Draft.created_at >= since)
-                .order_by(Draft.created_at.desc())
-            ).all()
-        )
-        if not drafts:
-            return []
-
-        headline_ids = [d.headline_id for d in drafts if d.headline_id]
-        headlines: dict[int, Headline] = {}
-        if headline_ids:
-            rows = session.exec(select(Headline).where(Headline.id.in_(headline_ids))).all()
-            headlines = {h.id: h for h in rows if h.id is not None}
-
-        impact_rank = {"high": 3, "med": 2, "low": 1}
-        drafts.sort(
-            key=lambda d: (impact_rank.get(d.impact or "med", 2), d.created_at or since),
-            reverse=True,
-        )
-
-        pairs: list[tuple[Draft, Headline | None]] = []
-        for draft in drafts[:limit]:
-            headline = headlines.get(draft.headline_id) if draft.headline_id else None
-            pairs.append((draft, headline))
-        return pairs
-
-
 def notify_teams_new_drafts(since: datetime) -> int:
-    """Send new pending drafts from this pipeline cycle to Teams."""
-    if not teams_configured() or not get_setting("teams_enabled", True):
+    if not teams_configured() or not get_setting("teams_enabled", False):
         return 0
 
-    pairs = _drafts_since(since, MAX_TEAMS_DRAFTS_PER_CYCLE)
+    pairs = drafts_since(since)
     if not pairs:
         return 0
 
