@@ -45,14 +45,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForPipelineDone(maxMs = 300000) {
+async function waitForPipelineDone(maxMs = 600000) {
   const start = Date.now();
   while (Date.now() - start < maxMs) {
-    await sleep(2000);
-    const status = await api('/pipeline/status');
-    if (!status.running) return status;
+    await sleep(3000);
+    try {
+      const status = await api('/pipeline/status', {}, 12000);
+      if (!status.running) return status;
+    } catch (err) {
+      if (err.message.includes('timed out')) {
+        continue;
+      }
+      throw err;
+    }
   }
-  throw new Error('Fetch is still running — check Activity in a minute');
+  return null;
 }
 
 // ── Auth ─────────────────────────────────────────────────
@@ -897,12 +904,17 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Fetching…';
   try {
-    const start = await api('/pipeline/run', { method: 'POST' });
+    const start = await api('/pipeline/run', { method: 'POST' }, 15000);
     if (!start.started) {
       showToast('Pipeline is already running', 'error');
       return;
     }
     const res = await waitForPipelineDone();
+    if (!res) {
+      showToast('Fetch still running — check Activity in a minute', 'success');
+      loadSettings();
+      return;
+    }
     if (res.last_error) {
       showToast(`Fetch failed: ${res.last_error}`, 'error');
       loadSettings();
@@ -924,7 +936,12 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
     loadSettings();
     if (isQueueTab()) loadQueue();
   } catch (err) {
-    showToast(err.message, 'error');
+    if (err.message.includes('timed out') || err.message.includes('Network error')) {
+      showToast('Fetch started — server is busy, check Activity shortly', 'success');
+      loadSettings();
+    } else {
+      showToast(err.message, 'error');
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = 'Fetch news now';
@@ -1161,7 +1178,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=53').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=54').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

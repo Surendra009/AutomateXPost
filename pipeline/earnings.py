@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -241,6 +242,24 @@ def _pending_draft_for_hash(content_hash: str) -> bool:
         return draft is not None
 
 
+EARNINGS_SOURCE = "Finnhub Earnings"
+
+
+@dataclass
+class _EarningsWrite:
+    symbol: str
+    title: str
+    summary: str
+    draft_text: str
+    impact: str
+    fmt: str
+    confidence: float
+    chash: str
+    date_str: str
+    release_at: datetime
+    expire_previews: bool = False
+
+
 def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
     """Fetch earnings calendar and create preview/result drafts. Returns (ingested, drafts)."""
     if not get_finnhub_key():
@@ -263,134 +282,144 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
         seen.add(key)
         unique_events.append(ev)
 
-    ingested = 0
+    pending: list[_EarningsWrite] = []
     drafts_created = 0
     market_drafts = 0
     now = datetime.utcnow()
 
-    with get_session() as session:
-        for event in unique_events:
-            symbol = (event.get("symbol") or "").upper()
-            if not symbol:
+    for event in unique_events:
+        symbol = (event.get("symbol") or "").upper()
+        if not symbol:
+            continue
+
+        on_watchlist = has_watchlist and in_watchlist(symbol, watchlist)
+        if has_watchlist and not on_watchlist:
+            continue
+
+        date_str = event.get("date") or today.isoformat()
+        quarter = int(event.get("quarter") or 0)
+        year = int(event.get("year") or 0)
+
+        try:
+            event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+
+        if budget is not None and budget.remaining <= 0:
+            break
+        if drafts_created >= MAX_EARNINGS_DRAFTS_PER_CYCLE:
+            break
+
+        if _has_actual(event):
+            kind = "result"
+            chash = _event_hash(symbol, date_str, quarter, year, kind)
+            if _headline_exists(chash):
+                continue
+            if earnings_ticker_blocked(symbol, results_only=True):
+                logger.debug("Skipping duplicate earnings result for %s", symbol)
                 continue
 
-            on_watchlist = has_watchlist and in_watchlist(symbol, watchlist)
-            if has_watchlist and not on_watchlist:
-                continue
-
-            date_str = event.get("date") or today.isoformat()
-            quarter = int(event.get("quarter") or 0)
-            year = int(event.get("year") or 0)
-
-            try:
-                event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            except ValueError:
-                continue
-
-            if budget is not None and budget.remaining <= 0:
-                break
-            if drafts_created >= MAX_EARNINGS_DRAFTS_PER_CYCLE:
-                break
-
-            # Results take priority over preview when actuals are in
-            if _has_actual(event):
-                built = _build_results(event)
-                if not built:
-                    continue
-                title, summary, draft_text, impact = built
-
-                if not has_watchlist:
-                    if impact != "high":
-                        continue
-                    if market_drafts >= MAX_MARKET_EARNINGS_DRAFTS_PER_CYCLE:
-                        continue
-
-                kind = "result"
-                chash = _event_hash(symbol, date_str, quarter, year, kind)
-                if _headline_exists(chash):
-                    continue
-                if was_recently_drafted(title, EARNINGS_SOURCE):
-                    continue
-
-                expire_earnings_previews_for_ticker(symbol)
-                if earnings_ticker_blocked(symbol, results_only=True):
-                    logger.debug("Skipping duplicate earnings result for %s", symbol)
-                    continue
-
-                release_at = estimate_earnings_release_utc(
-                    date_str, event.get("hour"), has_actuals=True
+            release_at = estimate_earnings_release_utc(
+                date_str, event.get("hour"), has_actuals=True
+            )
+            if release_at is None or not is_earnings_fresh(release_at):
+                logger.debug(
+                    "Skipping stale earnings result %s %s (release %s)",
+                    symbol,
+                    date_str,
+                    release_at,
                 )
-                if release_at is None or not is_earnings_fresh(release_at):
-                    logger.debug(
-                        "Skipping stale earnings result %s %s (release %s)",
-                        symbol,
-                        date_str,
-                        release_at,
-                    )
-                    continue
-
-                headline = Headline(
-                    source=EARNINGS_SOURCE,
-                    url=_event_url(symbol, date_str),
-                    title=title,
-                    summary=summary,
-                    published_at=release_at,
-                    hash=chash,
-                    title_fp=title_fingerprint(title),
-                    status="drafted",
-                )
-                session.add(headline)
-                session.flush()
-
-                draft = Draft(
-                    headline_id=headline.id,
-                    text=draft_text,
-                    format="BREAKING",
-                    impact=impact,
-                    category="earnings",
-                    tickers=symbol,
-                    confidence=0.95,
-                    status="pending",
-                    created_at=now,
-                )
-                session.add(draft)
-                ingested += 1
-                drafts_created += 1
-                if not has_watchlist:
-                    market_drafts += 1
-                if budget:
-                    budget.try_take(1)
                 continue
 
-            # Previews for watchlist tickers reporting today through preview window
-            if not on_watchlist:
-                continue
-            if event_date < today or event_date > preview_end:
-                continue
-
-            built = _build_preview(event)
+            built = _build_results(event)
             if not built:
                 continue
-            title, summary, draft_text = built
-            kind = "preview"
-            chash = _event_hash(symbol, date_str, quarter, year, kind)
-            if _headline_exists(chash) or _pending_draft_for_hash(chash):
-                continue
+            title, summary, draft_text, impact = built
+
+            if not has_watchlist:
+                if impact != "high":
+                    continue
+                if market_drafts >= MAX_MARKET_EARNINGS_DRAFTS_PER_CYCLE:
+                    continue
+
             if was_recently_drafted(title, EARNINGS_SOURCE):
                 continue
-            if earnings_ticker_blocked(symbol):
-                continue
 
-            release_at = estimate_earnings_release_utc(date_str, event.get("hour")) or now
+            pending.append(
+                _EarningsWrite(
+                    symbol=symbol,
+                    title=title,
+                    summary=summary,
+                    draft_text=draft_text,
+                    impact=impact,
+                    fmt="BREAKING",
+                    confidence=0.95,
+                    chash=chash,
+                    date_str=date_str,
+                    release_at=release_at,
+                    expire_previews=True,
+                )
+            )
+            drafts_created += 1
+            if not has_watchlist:
+                market_drafts += 1
+            continue
+
+        if not on_watchlist:
+            continue
+        if event_date < today or event_date > preview_end:
+            continue
+
+        kind = "preview"
+        chash = _event_hash(symbol, date_str, quarter, year, kind)
+        if _headline_exists(chash) or _pending_draft_for_hash(chash):
+            continue
+        if earnings_ticker_blocked(symbol):
+            continue
+
+        built = _build_preview(event)
+        if not built:
+            continue
+        title, summary, draft_text = built
+        if was_recently_drafted(title, EARNINGS_SOURCE):
+            continue
+
+        release_at = estimate_earnings_release_utc(date_str, event.get("hour")) or now
+        pending.append(
+            _EarningsWrite(
+                symbol=symbol,
+                title=title,
+                summary=summary,
+                draft_text=draft_text,
+                impact="med",
+                fmt="CONTEXT",
+                confidence=0.88,
+                chash=chash,
+                date_str=date_str,
+                release_at=release_at,
+            )
+        )
+        drafts_created += 1
+
+    ingested = 0
+    if not pending:
+        return 0, 0
+
+    with get_session() as session:
+        for item in pending:
+            if budget is not None and budget.remaining <= 0:
+                break
+            if item.expire_previews:
+                expire_earnings_previews_for_ticker(item.symbol)
 
             headline = Headline(
                 source=EARNINGS_SOURCE,
-                url=_event_url(symbol, date_str),
-                title=title,
-                summary=summary,
-                published_at=release_at,
-                hash=chash,
-                title_fp=title_fingerprint(title),
+                url=_event_url(item.symbol, item.date_str),
+                title=item.title,
+                summary=item.summary,
+                published_at=item.release_at,
+                hash=item.chash,
+                title_fp=title_fingerprint(item.title),
                 status="drafted",
             )
             session.add(headline)
@@ -398,23 +427,22 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
 
             draft = Draft(
                 headline_id=headline.id,
-                text=draft_text,
-                format="CONTEXT",
-                impact="med",
+                text=item.draft_text,
+                format=item.fmt,
+                impact=item.impact,
                 category="earnings",
-                tickers=symbol,
-                confidence=0.88,
+                tickers=item.symbol,
+                confidence=item.confidence,
                 status="pending",
                 created_at=now,
             )
             session.add(draft)
             ingested += 1
-            drafts_created += 1
             if budget:
                 budget.try_take(1)
 
         session.commit()
 
-    if drafts_created:
-        logger.info("Earnings: created %d drafts (%d events ingested)", drafts_created, ingested)
-    return ingested, drafts_created
+    if ingested:
+        logger.info("Earnings: created %d drafts (%d events ingested)", ingested, ingested)
+    return ingested, ingested

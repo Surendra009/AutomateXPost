@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from config import (
+    EARNINGS_ENRICH_BUDGET_SECONDS,
     MAX_EARNINGS_WEB_ARTICLES,
     MAX_EARNINGS_WEB_QUERIES,
     MAX_WEB_RESULTS_PER_QUERY,
@@ -152,6 +154,10 @@ def enrich_earnings_context(
     chunks: list[str] = []
     articles: list[str] = []
     sources: list[str] = []
+    deadline = time.monotonic() + EARNINGS_ENRICH_BUDGET_SECONDS
+
+    def _time_left() -> bool:
+        return time.monotonic() < deadline
 
     if finnhub_summary:
         chunks.append(finnhub_summary)
@@ -161,7 +167,7 @@ def enrich_earnings_context(
         chunks.append(fh_news)
 
     web_items: list[dict] = []
-    if WEB_SEARCH_ENABLED:
+    if WEB_SEARCH_ENABLED and _time_left():
         q_label = f"Q{quarter}" if quarter else ""
         year_s = str(year) if year else ""
         queries = [
@@ -171,6 +177,8 @@ def enrich_earnings_context(
         ][:MAX_EARNINGS_WEB_QUERIES]
         seen_urls: set[str] = set()
         for query in queries:
+            if not _time_left():
+                break
             batch = search_google_news(
                 query,
                 source_label="Web Search · earnings verify",
@@ -195,18 +203,19 @@ def enrich_earnings_context(
             len(queries),
         )
 
-    fh_article = fetch_earnings_article_text(symbol)
-    if fh_article:
-        articles.append(fh_article)
+    if _time_left():
+        fh_article = fetch_earnings_article_text(symbol)
+        if fh_article:
+            articles.append(fh_article)
 
-    if headline_url and headline_url.startswith("http"):
+    if _time_left() and headline_url and headline_url.startswith("http"):
         direct = fetch_article_text(headline_url)
         if direct and len(direct) > 200 and direct not in articles:
             articles.append(direct[:3500])
 
     fetched = 0
     for item in web_items:
-        if fetched >= MAX_EARNINGS_WEB_ARTICLES:
+        if fetched >= MAX_EARNINGS_WEB_ARTICLES or not _time_left():
             break
         url = (item.get("url") or "").strip()
         if not url:
