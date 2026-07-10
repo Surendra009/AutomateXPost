@@ -785,6 +785,10 @@ async function loadSettings() {
         <span class="${data.llm?.filter_provider && data.llm.filter_provider !== 'none' ? 'status-ok' : 'status-no'}">${esc((data.llm?.filter_provider || '—') + ' / ' + (data.llm?.effective_filter_model || data.llm?.filter_model || '—'))}</span>
       </div>
       <div class="status-row">
+        <span>Serper</span>
+        <span class="${cfg.serper_configured ? 'status-ok' : 'status-no'}">${cfg.serper_configured ? 'Connected' : 'Not set'}</span>
+      </div>
+      <div class="status-row">
         <span>Finnhub</span>
         <span class="${cfg.finnhub_configured ? 'status-ok' : 'status-no'}">${cfg.finnhub_configured ? 'Connected' : 'Not set'}</span>
       </div>
@@ -1227,7 +1231,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=66').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=67').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

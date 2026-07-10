@@ -17,7 +17,7 @@ from pipeline.freshness import format_age
 from pipeline.llm import call_chat_llm
 from pipeline.noise import is_title_noise
 from pipeline.url_resolve import resolve_article_url
-from pipeline.web_search import search_google_news
+from pipeline.web_search import search_news
 
 logger = setup_logging()
 
@@ -131,7 +131,7 @@ def search_posted(phrase: str, terms: list[str], *, limit: int = 8) -> list[dict
 
 
 def fetch_topic_news(query: str, *, limit: int | None = None) -> list[dict[str, Any]]:
-    """Search Google News for any topic — tries several query shapes."""
+    """Search Serper news for any topic — tries several query shapes."""
     limit = limit or min(MAX_WEB_RESULTS_PER_QUERY, 8)
     query = query.strip()
     if not query:
@@ -147,7 +147,7 @@ def fetch_topic_news(query: str, *, limit: int | None = None) -> list[dict[str, 
     for search_q in candidates:
         if len(items) >= limit:
             break
-        raw = search_google_news(search_q, source_label="Chat Search", limit=limit)
+        raw = search_news(search_q, source_label="Chat Search", limit=limit)
         for item in raw:
             title = (item.get("title") or "").strip()
             if not title or is_title_noise(title):

@@ -10,7 +10,7 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-APP_BUILD = os.getenv("APP_BUILD", "66")
+APP_BUILD = os.getenv("APP_BUILD", "67")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
@@ -103,6 +103,8 @@ REJECTION_LEARN_THRESHOLD = 2  # rejects before a title shape is treated as nois
 REJECTION_FUZZY_THRESHOLD = 88  # fuzzy match against learned rejected titles
 
 WEB_SEARCH_ENABLED = os.getenv("WEB_SEARCH_ENABLED", "true").lower() in ("1", "true", "yes")
+SERPER_API_KEY = getenv_secret("SERPER_API_KEY")
+SERPER_NEWS_RECENCY = os.getenv("SERPER_NEWS_RECENCY", "qdr:d")  # past day: qdr:h | qdr:d | qdr:w
 MAX_WEB_RESULTS_PER_QUERY = int(os.getenv("MAX_WEB_RESULTS_PER_QUERY", "6"))
 MAX_WEB_TICKERS_PER_CYCLE = int(os.getenv("MAX_WEB_TICKERS_PER_CYCLE", "8"))
 MAX_WEB_TOPICS_PER_CYCLE = int(os.getenv("MAX_WEB_TOPICS_PER_CYCLE", "5"))
@@ -200,6 +202,7 @@ def get_settings():
         "finnhub_configured": bool(get_finnhub_key()),
         "dry_run": DRY_RUN,
         "web_search_enabled": WEB_SEARCH_ENABLED,
+        "serper_configured": bool(SERPER_API_KEY),
         "push_configured": bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY),
         "alert_webhook_configured": bool(ALERT_WEBHOOK_URL),
         "teams_configured": bool(TEAMS_WEBHOOK_URL),

@@ -17,7 +17,7 @@ from pipeline.noise import is_title_noise
 from pipeline.story_key import title_fingerprint
 from pipeline.url_resolve import resolve_article_url
 from pipeline.watchlist_scope import normalized_watchlist
-from pipeline.web_search import search_google_news
+from pipeline.web_search import search_news
 
 logger = setup_logging()
 
@@ -45,7 +45,7 @@ MAX_ITEMS_PER_TICKER = 3
 
 
 def fetch_web_news() -> list[dict[str, Any]]:
-    """Primary discovery: Google News searches for earnings, mergers, and company news."""
+    """Primary discovery: Serper news search for earnings, mergers, and company news."""
     if not WEB_SEARCH_ENABLED:
         return []
 
@@ -81,14 +81,14 @@ def fetch_web_news() -> list[dict[str, Any]]:
         return added
 
     for query, source in _MARKET_QUERIES:
-        batch = search_google_news(query, source_label=source, limit=MAX_WEB_RESULTS_PER_QUERY)
+        batch = search_news(query, source_label=source, limit=MAX_WEB_RESULTS_PER_QUERY)
         count = add_batch(batch)
         if count:
             per_source[source] = per_source.get(source, 0) + count
 
     for topic in topics:
         query = f'"{topic}" news'
-        batch = search_google_news(query, source_label=SOURCE_TOPIC, limit=MAX_WEB_RESULTS_PER_QUERY)
+        batch = search_news(query, source_label=SOURCE_TOPIC, limit=MAX_WEB_RESULTS_PER_QUERY)
         count = add_batch(batch)
         if count:
             per_source[SOURCE_TOPIC] = per_source.get(SOURCE_TOPIC, 0) + count
@@ -97,13 +97,13 @@ def fetch_web_news() -> list[dict[str, Any]]:
     for symbol in watchlist:
         for template, source in _TICKER_QUERIES:
             query = template.format(symbol=symbol)
-            batch = search_google_news(query, source_label=source, limit=MAX_WEB_RESULTS_PER_QUERY)
+            batch = search_news(query, source_label=source, limit=MAX_WEB_RESULTS_PER_QUERY)
             count = add_batch(batch, symbol=symbol)
             if count:
                 per_source[source] = per_source.get(source, 0) + count
 
         if per_ticker.get(symbol, 0) < MAX_ITEMS_PER_TICKER:
-            cal_batch = search_google_news(
+            cal_batch = search_news(
                 f"{symbol} earnings date calendar {today}",
                 source_label=SOURCE_CALENDAR,
                 limit=MAX_WEB_RESULTS_PER_QUERY,

@@ -122,14 +122,17 @@ def get_pipeline_status(*, lightweight: bool = False) -> dict:
 def _active_news_sources() -> list[dict]:
     from config import AI_RSS_FEEDS, RSS_FEEDS, WEB_SEARCH_ENABLED
     from pipeline.finnhub_api import get_finnhub_key
+    from pipeline.web_search import serper_configured
+
+    serper_ok = serper_configured()
 
     sources = [{"name": name, "type": "rss", "enabled": True} for name, _ in RSS_FEEDS]
     sources.extend({"name": name, "type": "ai", "enabled": True} for name, _ in AI_RSS_FEEDS)
     sources.append({
-        "name": "Web Search (Google News)",
+        "name": "Web Search (Serper)",
         "type": "search",
-        "enabled": WEB_SEARCH_ENABLED,
-        "hint": "Primary for earnings, mergers, company news",
+        "enabled": WEB_SEARCH_ENABLED and serper_ok,
+        "hint": "Connected" if serper_ok else "Set SERPER_API_KEY on Railway",
     })
     fh_ok = bool(get_finnhub_key())
     sources.append({

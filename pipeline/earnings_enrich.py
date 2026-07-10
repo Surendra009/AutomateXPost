@@ -21,7 +21,7 @@ from pipeline.earnings_parse import (
     fetch_earnings_news_context,
 )
 from pipeline.enrich import fetch_article_text
-from pipeline.web_search import search_google_news
+from pipeline.web_search import search_news
 
 logger = setup_logging()
 
@@ -190,7 +190,7 @@ def enrich_earnings_context(
         for query in queries:
             if not _time_left():
                 break
-            batch = search_google_news(
+            batch = search_news(
                 query,
                 source_label="Web Search · earnings verify",
                 limit=MAX_WEB_RESULTS_PER_QUERY,
