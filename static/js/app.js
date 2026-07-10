@@ -778,7 +778,11 @@ async function loadSettings() {
       </div>
       <div class="status-row">
         <span>Draft LLM</span>
-        <span>${esc((data.llm?.draft_provider || '—') + ' / ' + (data.llm?.draft_model || '—'))}</span>
+        <span class="${data.llm?.deepseek_configured ? 'status-ok' : 'status-no'}">${esc((data.llm?.draft_provider || '—') + ' / ' + (data.llm?.draft_model || '—'))}</span>
+      </div>
+      <div class="status-row">
+        <span>Filter LLM</span>
+        <span class="${data.llm?.filter_provider && data.llm.filter_provider !== 'none' ? 'status-ok' : 'status-no'}">${esc((data.llm?.filter_provider || '—') + ' / ' + (data.llm?.filter_model || '—'))}</span>
       </div>
       <div class="status-row">
         <span>Finnhub</span>
@@ -896,6 +900,26 @@ document.getElementById('topic-input').addEventListener('keydown', async (e) => 
   const input = e.target;
   if (await addSearchTopic(input.value)) {
     input.value = '';
+  }
+});
+
+document.getElementById('test-llm').addEventListener('click', async () => {
+  const btn = document.getElementById('test-llm');
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  try {
+    const res = await api('/llm/test', {}, 120000);
+    if (res.filter_ok && res.draft_ok) {
+      showToast(`DeepSeek OK (${res.filter_provider} / ${res.filter_model})`, 'success');
+    } else {
+      showToast(res.error || 'LLM test failed', 'error');
+    }
+    loadSettings();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test DeepSeek LLM';
   }
 });
 
@@ -1203,7 +1227,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=62').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=63').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

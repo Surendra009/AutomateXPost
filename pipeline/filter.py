@@ -8,12 +8,11 @@ from sqlmodel import select
 from config import FILTER_MODEL, FILTER_PROVIDER, MIN_AI_RELEVANCE_SCORE, MIN_RELEVANCE_SCORE
 from database import get_session, get_setting
 from logging_config import setup_logging
-from security import redact_secrets
 from models import Headline
 from pipeline.ai_news import enrich_ai_classification, is_ai_source, is_material_ai_update
 from pipeline.classify_cache import cache_classification, get_cached_classification, prune_classification_cache
 from pipeline.freshness import is_fresh
-from pipeline.llm_providers import call_llm
+from pipeline.llm_providers import call_llm, get_last_llm_error, resolve_provider
 from pipeline.noise import is_obvious_noise
 from pipeline.prioritize import composite_score
 
@@ -262,8 +261,9 @@ def filter_headlines(headlines: list[Headline]) -> tuple[list[tuple[Headline, di
         else:
             need_llm.append(h)
 
-    for batch_start in range(0, len(need_llm), 10):
-        batch = need_llm[batch_start : batch_start + 10]
+    batch_size = 5
+    for batch_start in range(0, len(need_llm), batch_size):
+        batch = need_llm[batch_start : batch_start + batch_size]
         prompt = _build_batch_prompt(batch, watchlist, search_topics)
         raw = _call_claude(FILTER_SYSTEM_PROMPT, prompt, FILTER_MODEL)
         if not raw:
@@ -288,9 +288,18 @@ def filter_headlines(headlines: list[Headline]) -> tuple[list[tuple[Headline, di
     results.sort(key=lambda x: composite_score(x[0], x[1]), reverse=True)
 
     filter_error: str | None = None
-    if need_llm and not results and llm_failures > 0:
-        filter_error = "Filter LLM unavailable — check DEEPSEEK_API_KEY on Railway"
-        logger.error(filter_error)
+    if need_llm and not results:
+        last_err = get_last_llm_error()
+        provider = resolve_provider(FILTER_PROVIDER)
+        if llm_failures > 0:
+            filter_error = last_err or (
+                "No LLM API key configured — set DEEPSEEK_API_KEY on Railway and redeploy"
+                if provider == "none"
+                else f"{provider} filter request failed — check API balance and Railway logs"
+            )
+        else:
+            filter_error = "Filter LLM returned no usable classifications — try fetch again"
+        logger.error("Filter failed: %s", filter_error)
 
     logger.info(
         "Filter kept %d/%d headlines (pre-filter %d, cache hits %d, Haiku %d)",

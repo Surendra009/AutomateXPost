@@ -29,7 +29,7 @@ from pipeline.freshness import discard_stale_headlines, format_age, age_minutes,
 from pipeline.finnhub_api import test_finnhub_connection
 from pipeline.post import PostingError, get_today_stats, publish_draft
 from pipeline.discord import send_discord_test_message, discord_configured
-from pipeline.llm_providers import llm_status
+from pipeline.llm_providers import llm_status, test_llm_connection
 from pipeline.teams import send_teams_test_message, teams_configured
 from pipeline.push import (
     get_vapid_public_key,
@@ -487,6 +487,14 @@ def teams_test(request: Request):
 def pipeline_status(request: Request):
     require_auth(request)
     return get_pipeline_status(lightweight=True)
+
+
+@router.get("/llm/test")
+def llm_test(request: Request):
+    require_auth(request)
+    result = test_llm_connection()
+    set_setting("llm_last_test", result)
+    return result
 
 
 @router.get("/finnhub/test")

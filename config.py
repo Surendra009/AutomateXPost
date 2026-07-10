@@ -10,15 +10,27 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-APP_BUILD = os.getenv("APP_BUILD", "62")
+APP_BUILD = os.getenv("APP_BUILD", "63")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
 APP_PASSWORD_HASH = getenv_secret("APP_PASSWORD_HASH")
 ANTHROPIC_API_KEY = getenv_secret("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = getenv_secret("OPENAI_API_KEY")
-DEEPSEEK_API_KEY = getenv_secret("DEEPSEEK_API_KEY")
+DEEPSEEK_ENV_NAMES = ("DEEPSEEK_API_KEY", "DEEPSEEK_KEY")
 DEEPSEEK_API_BASE = os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
+
+
+def get_deepseek_key() -> str:
+    """Read DeepSeek API key (trimmed). Supports common env var aliases."""
+    for name in DEEPSEEK_ENV_NAMES:
+        value = getenv_secret(name)
+        if value:
+            return value
+    return ""
+
+
+DEEPSEEK_API_KEY = get_deepseek_key()
 
 FINNHUB_ENV_NAMES = ("FINNHUB_KEY", "FINNHUB_API_KEY", "FINHUB_KEY")
 
@@ -178,7 +190,7 @@ def get_settings():
     return {
         "anthropic_configured": bool(ANTHROPIC_API_KEY),
         "openai_configured": bool(OPENAI_API_KEY),
-        "deepseek_configured": bool(DEEPSEEK_API_KEY),
+        "deepseek_configured": bool(get_deepseek_key()),
         "x_configured": all([X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET]),
         "finnhub_configured": bool(get_finnhub_key()),
         "dry_run": DRY_RUN,

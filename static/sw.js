@@ -1,4 +1,4 @@
-const CACHE_NAME = 'postpilot-v62';
+const CACHE_NAME = 'postpilot-v63';
 const SHELL = ['/', '/static/css/style.css', '/static/js/app.js', '/manifest.json'];
 const SHELL_PATHS = new Set(['/', '/manifest.json', '/static/css/style.css', '/static/js/app.js']);
 
