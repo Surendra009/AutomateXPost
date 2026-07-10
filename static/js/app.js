@@ -1168,10 +1168,23 @@ function esc(str) {
   return el.innerHTML;
 }
 
+function parseIsoUtc(iso) {
+  if (!iso) return null;
+  const s = String(iso).trim();
+  if (!s) return null;
+  if (/[Zz]$/.test(s) || /[+-]\d{2}:\d{2}$/.test(s)) {
+    return new Date(s);
+  }
+  // Python utcnow() / naive DB datetimes are UTC without a suffix
+  return new Date(`${s}Z`);
+}
+
 function formatDate(iso) {
-  const d = new Date(iso);
+  const d = parseIsoUtc(iso);
+  if (!d || Number.isNaN(d.getTime())) return '—';
   const now = new Date();
-  const diff = (now - d) / 1000;
+  const diff = Math.max(0, (now - d) / 1000);
+  if (diff < 60) return 'just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -1190,7 +1203,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=60').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=61').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

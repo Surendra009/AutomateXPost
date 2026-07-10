@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 from config import (
     MARKET_CLOSE_HOUR,
@@ -175,7 +175,7 @@ def _save_cycle_stats(
     skipped_stale: int = 0,
     skipped_dup: int = 0,
 ) -> None:
-    set_setting("pipeline_last_run_at", datetime.utcnow().isoformat())
+    set_setting("pipeline_last_run_at", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     set_setting("pipeline_last_ingest_count", ingest_count)
     set_setting("pipeline_last_drafts_created", drafts_created)
     set_setting("pipeline_last_filter_kept", filter_kept)
