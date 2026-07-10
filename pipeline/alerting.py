@@ -10,6 +10,7 @@ import httpx
 from config import ALERT_WEBHOOK_URL
 from database import get_session, get_setting, set_setting
 from logging_config import setup_logging
+from pipeline.timeutil import parse_utc_naive
 
 logger = setup_logging()
 
@@ -24,12 +25,9 @@ def send_alert(title: str, message: str, *, level: str = "warning") -> bool:
 
     last = get_setting(_LAST_ALERT_KEY)
     if last:
-        try:
-            last_dt = datetime.fromisoformat(last)
-            if datetime.utcnow() - last_dt < timedelta(minutes=_ALERT_COOLDOWN_MINUTES):
-                return False
-        except ValueError:
-            pass
+        last_dt = parse_utc_naive(last)
+        if last_dt and datetime.utcnow() - last_dt < timedelta(minutes=_ALERT_COOLDOWN_MINUTES):
+            return False
 
     payload = {
         "text": f"[PostPilot {level.upper()}] {title}\n{message}",
@@ -63,9 +61,8 @@ def check_pipeline_health(drafts_created: int, error: str | None) -> None:
     if not last_run:
         return
 
-    try:
-        last_dt = datetime.fromisoformat(last_run)
-    except ValueError:
+    last_dt = parse_utc_naive(last_run)
+    if not last_dt:
         return
 
     if datetime.utcnow() - last_dt > timedelta(hours=24):

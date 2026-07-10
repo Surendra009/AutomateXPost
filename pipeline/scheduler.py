@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 
 from config import (
     MARKET_CLOSE_HOUR,
@@ -31,6 +31,7 @@ from pipeline.ingest import get_unfiltered_headlines, ingest_headlines
 from pipeline.macro_calendar import process_macro_calendar
 from pipeline.prioritize import select_diverse_for_drafting, select_headlines_for_filter
 from pipeline.stale import expire_stale_drafts
+from pipeline.timeutil import parse_utc_naive
 from pipeline.schedule import (
     CATCHUP_SETTING_KEY,
     evaluate_schedule,
@@ -175,7 +176,7 @@ def _save_cycle_stats(
     skipped_stale: int = 0,
     skipped_dup: int = 0,
 ) -> None:
-    set_setting("pipeline_last_run_at", datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+    set_setting("pipeline_last_run_at", datetime.utcnow().isoformat())
     set_setting("pipeline_last_ingest_count", ingest_count)
     set_setting("pipeline_last_drafts_created", drafts_created)
     set_setting("pipeline_last_filter_kept", filter_kept)
@@ -244,14 +245,11 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
 
                 paused_until = get_setting("paused_until")
                 if paused_until:
-                    try:
-                        pause_dt = datetime.fromisoformat(paused_until)
-                        if datetime.utcnow() < pause_dt:
-                            logger.debug("Pipeline paused until %s", paused_until)
-                            _save_cycle_stats()
-                            return get_pipeline_status(lightweight=True)
-                    except ValueError:
-                        pass
+                    pause_dt = parse_utc_naive(paused_until)
+                    if pause_dt and datetime.utcnow() < pause_dt:
+                        logger.debug("Pipeline paused until %s", paused_until)
+                        _save_cycle_stats()
+                        return get_pipeline_status(lightweight=True)
 
                 logger.info("Pipeline cycle starting (%s)", decision.mode)
                 reset_earnings_highlight_budget()

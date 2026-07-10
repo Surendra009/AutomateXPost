@@ -1203,7 +1203,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=61').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=62').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

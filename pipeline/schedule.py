@@ -59,7 +59,8 @@ def _parse_run_at(value: str | None, tz: ZoneInfo) -> datetime | None:
     if not value:
         return None
     try:
-        dt = datetime.fromisoformat(value)
+        text = value.strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
         if dt.tzinfo is None:
             return dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz)
         return dt.astimezone(tz)
@@ -81,7 +82,8 @@ def _parse_catchup_at(value: str | None, tz: ZoneInfo) -> datetime | None:
     if not value:
         return None
     try:
-        dt = datetime.fromisoformat(value)
+        text = value.strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
         if dt.tzinfo is None:
             return dt.replace(tzinfo=tz)
         return dt.astimezone(tz)
