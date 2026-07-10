@@ -1,6 +1,7 @@
 """Background pipeline scheduler."""
 
 import asyncio
+import threading
 from datetime import datetime
 
 from config import (
@@ -53,6 +54,7 @@ _scheduled_task: asyncio.Task | None = None
 _manual_run_task: asyncio.Task | None = None
 _pipeline_running = False
 _pipeline_started_at: datetime | None = None
+_pipeline_lock = threading.Lock()
 
 _PIPELINE_STUCK_SECONDS = 900  # 15 min — reset flag so UI/API recover
 
@@ -182,122 +184,129 @@ def trigger_pipeline_cycle(*, force: bool = False) -> dict:
 def _run_pipeline_cycle(*, force: bool = False) -> dict:
     global _pipeline_running, _pipeline_started_at
 
-    if _pipeline_running:
+    if not _pipeline_lock.acquire(blocking=False):
+        logger.debug("Pipeline cycle skipped — lock held by another cycle")
         return get_pipeline_status(lightweight=True)
-
-    decision = evaluate_schedule(force=force)
-    if not decision.run:
-        logger.debug("Pipeline skipped: %s", decision.reason)
-        set_setting("pipeline_last_schedule_skip", decision.reason)
-        return get_pipeline_status(lightweight=True)
-
-    _pipeline_running = True
-    _pipeline_started_at = datetime.utcnow()
-    ingest_count = 0
-    expired = 0
-    budget = DraftBudget()
-    cycle_start = datetime.utcnow()
 
     try:
-        with cycle_max_news_age(decision.max_news_age_hours):
-            if not get_setting("pipeline_enabled", True):
-                logger.debug("Pipeline disabled, skipping cycle")
-                _save_cycle_stats()
-                return get_pipeline_status(lightweight=True)
+        if _pipeline_running:
+            return get_pipeline_status(lightweight=True)
 
-            paused_until = get_setting("paused_until")
-            if paused_until:
-                try:
-                    pause_dt = datetime.fromisoformat(paused_until)
-                    if datetime.utcnow() < pause_dt:
-                        logger.debug("Pipeline paused until %s", paused_until)
-                        _save_cycle_stats()
-                        return get_pipeline_status(lightweight=True)
-                except ValueError:
-                    pass
+        decision = evaluate_schedule(force=force)
+        if not decision.run:
+            logger.debug("Pipeline skipped: %s", decision.reason)
+            set_setting("pipeline_last_schedule_skip", decision.reason)
+            return get_pipeline_status(lightweight=True)
 
-            logger.info("Pipeline cycle starting (%s)", decision.mode)
-            reset_earnings_highlight_budget()
-            reset_earnings_enrich_stats()
-            clear_sec_feed_cache()
-            expired = expire_stale_drafts()
-            discarded = discard_stale_headlines()
-            ingest_count, ingest_by_source = ingest_headlines()
+        _pipeline_running = True
+        _pipeline_started_at = datetime.utcnow()
+        ingest_count = 0
+        expired = 0
+        budget = DraftBudget()
+        cycle_start = datetime.utcnow()
 
-            earnings_ingested, _ = process_earnings(budget)
-            if earnings_ingested:
-                ingest_count += earnings_ingested
-                ingest_by_source["Finnhub Earnings"] = earnings_ingested
+        try:
+            with cycle_max_news_age(decision.max_news_age_hours):
+                if not get_setting("pipeline_enabled", True):
+                    logger.debug("Pipeline disabled, skipping cycle")
+                    _save_cycle_stats()
+                    return get_pipeline_status(lightweight=True)
 
-            macro_ingested, _ = process_macro_calendar(budget)
-            if macro_ingested:
-                ingest_count += macro_ingested
-                ingest_by_source["Finnhub Macro"] = macro_ingested
+                paused_until = get_setting("paused_until")
+                if paused_until:
+                    try:
+                        pause_dt = datetime.fromisoformat(paused_until)
+                        if datetime.utcnow() < pause_dt:
+                            logger.debug("Pipeline paused until %s", paused_until)
+                            _save_cycle_stats()
+                            return get_pipeline_status(lightweight=True)
+                    except ValueError:
+                        pass
 
-            sec_ingested, _ = process_sec_filings(budget)
-            if sec_ingested:
-                ingest_count += sec_ingested
-                ingest_by_source["SEC 8-K (structured)"] = sec_ingested
+                logger.info("Pipeline cycle starting (%s)", decision.mode)
+                reset_earnings_highlight_budget()
+                reset_earnings_enrich_stats()
+                clear_sec_feed_cache()
+                expired = expire_stale_drafts()
+                discarded = discard_stale_headlines()
+                ingest_count, ingest_by_source = ingest_headlines()
 
-            company_ingested, _ = process_company_news(budget)
-            if company_ingested:
-                ingest_count += company_ingested
-                ingest_by_source["Finnhub Company"] = company_ingested
+                earnings_ingested, _ = process_earnings(budget)
+                if earnings_ingested:
+                    ingest_count += earnings_ingested
+                    ingest_by_source["Finnhub Earnings"] = earnings_ingested
 
-            headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
-            headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
-            filter_kept = 0
-            if headlines and budget.remaining > 0:
-                filtered = filter_headlines(headlines)
-                filter_kept = len(filtered)
-                filtered = select_diverse_for_drafting(filtered, budget.remaining * 2)
-                if filtered:
-                    draft_posts(filtered, budget)
+                macro_ingested, _ = process_macro_calendar(budget)
+                if macro_ingested:
+                    ingest_count += macro_ingested
+                    ingest_by_source["Finnhub Macro"] = macro_ingested
 
+                sec_ingested, _ = process_sec_filings(budget)
+                if sec_ingested:
+                    ingest_count += sec_ingested
+                    ingest_by_source["SEC 8-K (structured)"] = sec_ingested
+
+                company_ingested, _ = process_company_news(budget)
+                if company_ingested:
+                    ingest_count += company_ingested
+                    ingest_by_source["Finnhub Company"] = company_ingested
+
+                headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
+                headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
+                filter_kept = 0
+                if headlines and budget.remaining > 0:
+                    filtered = filter_headlines(headlines)
+                    filter_kept = len(filtered)
+                    filtered = select_diverse_for_drafting(filtered, budget.remaining * 2)
+                    if filtered:
+                        draft_posts(filtered, budget)
+
+                _save_cycle_stats(
+                    ingest_count=ingest_count,
+                    drafts_created=budget.created,
+                    filter_kept=filter_kept,
+                    expired=expired,
+                    ingest_by_source=ingest_by_source,
+                )
+                set_setting("pipeline_last_schedule_mode", decision.mode)
+                set_setting("pipeline_last_schedule_skip", None)
+                if decision.mode == "catchup":
+                    set_setting(CATCHUP_SETTING_KEY, local_now().isoformat())
+
+                logger.info(
+                    "Pipeline cycle complete (%s, ingested=%d, drafts=%d, expired=%d, discarded=%d)",
+                    decision.mode,
+                    ingest_count,
+                    budget.created,
+                    expired,
+                    discarded,
+                )
+
+                if budget.created:
+                    notify_new_drafts(budget.created)
+                    notify_discord_new_drafts(cycle_start)
+                    notify_teams_new_drafts(cycle_start)
+
+                check_pipeline_health(budget.created, None)
+                refresh_post_metrics()
+
+        except Exception as e:
+            logger.error("Pipeline cycle error: %s", e, exc_info=True)
+            send_alert("Pipeline cycle failed", str(e), level="error")
             _save_cycle_stats(
                 ingest_count=ingest_count,
                 drafts_created=budget.created,
-                filter_kept=filter_kept,
                 expired=expired,
-                ingest_by_source=ingest_by_source,
+                error=str(e),
             )
-            set_setting("pipeline_last_schedule_mode", decision.mode)
-            set_setting("pipeline_last_schedule_skip", None)
-            if decision.mode == "catchup":
-                set_setting(CATCHUP_SETTING_KEY, local_now().isoformat())
+            check_pipeline_health(budget.created, str(e))
+        finally:
+            _pipeline_running = False
+            _pipeline_started_at = None
 
-            logger.info(
-                "Pipeline cycle complete (%s, ingested=%d, drafts=%d, expired=%d, discarded=%d)",
-                decision.mode,
-                ingest_count,
-                budget.created,
-                expired,
-                discarded,
-            )
-
-            if budget.created:
-                notify_new_drafts(budget.created)
-                notify_discord_new_drafts(cycle_start)
-                notify_teams_new_drafts(cycle_start)
-
-            check_pipeline_health(budget.created, None)
-            refresh_post_metrics()
-
-    except Exception as e:
-        logger.error("Pipeline cycle error: %s", e, exc_info=True)
-        send_alert("Pipeline cycle failed", str(e), level="error")
-        _save_cycle_stats(
-            ingest_count=ingest_count,
-            drafts_created=budget.created,
-            expired=expired,
-            error=str(e),
-        )
-        check_pipeline_health(budget.created, str(e))
+        return get_pipeline_status(lightweight=True)
     finally:
-        _pipeline_running = False
-        _pipeline_started_at = None
-
-    return get_pipeline_status(lightweight=True)
+        _pipeline_lock.release()
 
 
 async def pipeline_loop(interval: int = 300) -> None:

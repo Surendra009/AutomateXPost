@@ -26,11 +26,13 @@ from pipeline.web_search import search_google_news
 logger = setup_logging()
 
 _cycle_enrichments: list[dict] = []
+_enrich_cache: dict[str, EarningsEnrichment] = {}
 
 
 def reset_earnings_enrich_stats() -> None:
-    global _cycle_enrichments
+    global _cycle_enrichments, _enrich_cache
     _cycle_enrichments = []
+    _enrich_cache = {}
 
 
 def earnings_enrich_summary() -> dict:
@@ -39,7 +41,7 @@ def earnings_enrich_summary() -> dict:
     return {
         "tickers_enriched": len(_cycle_enrichments),
         "articles_fetched": sum(row.get("articles", 0) for row in _cycle_enrichments),
-        "web_headlines": sum(row.get("headlines", 0) for row in _cycle_enrichments),
+        "web_headlines": sum(row.get("web_headlines", 0) for row in _cycle_enrichments),
         "cross_verified": verified,
         "recent": _cycle_enrichments[-5:],
     }
@@ -52,6 +54,12 @@ class EarningsEnrichment:
     facts: EarningsFacts | None = None
     sources: list[str] = field(default_factory=list)
     cross_check: list[str] = field(default_factory=list)
+
+
+def _cache_key(symbol: str, quarter: int | None, year: int | None) -> str:
+    q = f"Q{quarter}" if quarter else ""
+    y = str(year) if year else ""
+    return f"{symbol.upper()}|{q}|{y}"
 
 
 def _parse_eps(value: str | None) -> float | None:
@@ -93,24 +101,20 @@ def _money_close(a: str | None, b: str | None, tol: float = 0.06) -> bool:
 
 
 def cross_check_facts(finnhub: EarningsFacts, web: EarningsFacts) -> list[str]:
-    """Compare Finnhub structured numbers to text extracted from web articles."""
+    """Compare Finnhub actuals to web text — ignore web estimates (often wrong)."""
     notes: list[str] = []
     verified: list[str] = []
 
     fe, we = _parse_eps(finnhub.eps_actual), _parse_eps(web.eps_actual)
     if fe is not None and we is not None:
         if abs(fe - we) <= 0.02:
-            verified.append("EPS")
+            verified.append("EPS actual")
         else:
-            notes.append(f"Web EPS {web.eps_actual} differs from Finnhub {finnhub.eps_actual}")
-
-    fe, we = _parse_eps(finnhub.eps_estimate), _parse_eps(web.eps_estimate)
-    if fe is not None and we is not None and abs(fe - we) > 0.02:
-        notes.append(f"Web EPS est {web.eps_estimate} differs from Finnhub {finnhub.eps_estimate}")
+            notes.append(f"Web EPS actual {web.eps_actual} differs from Finnhub {finnhub.eps_actual}")
 
     if finnhub.revenue_actual and web.revenue_actual:
         if _money_close(finnhub.revenue_actual, web.revenue_actual):
-            verified.append("revenue")
+            verified.append("revenue actual")
         else:
             notes.append(
                 f"Web revenue {web.revenue_actual} differs from Finnhub {finnhub.revenue_actual}"
@@ -122,13 +126,13 @@ def cross_check_facts(finnhub: EarningsFacts, web: EarningsFacts) -> list[str]:
 
 
 def merge_facts(primary: EarningsFacts, supplemental: EarningsFacts) -> EarningsFacts:
-    """Keep Finnhub numbers; fill gaps from web extraction."""
+    """Keep Finnhub numbers; only fill non-numeric gaps from web."""
     return EarningsFacts(
         quarter=primary.quarter or supplemental.quarter,
-        eps_actual=primary.eps_actual or supplemental.eps_actual,
-        eps_estimate=primary.eps_estimate or supplemental.eps_estimate,
-        revenue_actual=primary.revenue_actual or supplemental.revenue_actual,
-        revenue_estimate=primary.revenue_estimate or supplemental.revenue_estimate,
+        eps_actual=primary.eps_actual,
+        eps_estimate=primary.eps_estimate,
+        revenue_actual=primary.revenue_actual,
+        revenue_estimate=primary.revenue_estimate,
         yoy_pct=primary.yoy_pct or supplemental.yoy_pct,
     )
 
@@ -148,13 +152,21 @@ def enrich_earnings_context(
     finnhub_facts: EarningsFacts | None = None,
     finnhub_summary: str = "",
     headline_url: str = "",
+    skip_web_search: bool = False,
 ) -> EarningsEnrichment:
-    """Web search + article fetch to enrich/verify Finnhub earnings before LLM."""
+    """Web search + article fetch to enrich Finnhub earnings before drafting."""
     symbol = symbol.upper()
+    key = _cache_key(symbol, quarter, year)
+    cached = _enrich_cache.get(key)
+    if cached is not None:
+        logger.debug("Earnings enrich cache hit for %s", symbol)
+        return cached
+
     chunks: list[str] = []
     articles: list[str] = []
     sources: list[str] = []
     deadline = time.monotonic() + EARNINGS_ENRICH_BUDGET_SECONDS
+    web_items: list[dict] = []
 
     def _time_left() -> bool:
         return time.monotonic() < deadline
@@ -162,18 +174,17 @@ def enrich_earnings_context(
     if finnhub_summary:
         chunks.append(finnhub_summary)
 
-    fh_news = fetch_earnings_news_context(symbol)
-    if fh_news:
-        chunks.append(fh_news)
+    if _time_left():
+        fh_news = fetch_earnings_news_context(symbol)
+        if fh_news:
+            chunks.append(fh_news)
 
-    web_items: list[dict] = []
-    if WEB_SEARCH_ENABLED and _time_left():
+    if WEB_SEARCH_ENABLED and not skip_web_search and _time_left():
         q_label = f"Q{quarter}" if quarter else ""
         year_s = str(year) if year else ""
         queries = [
             f'"{symbol}" {q_label} earnings EPS revenue beat miss {year_s}'.strip(),
             f'"{symbol}" earnings results segment guidance outlook',
-            f'"{symbol}" quarterly earnings press release',
         ][:MAX_EARNINGS_WEB_QUERIES]
         seen_urls: set[str] = set()
         for query in queries:
@@ -203,14 +214,14 @@ def enrich_earnings_context(
             len(queries),
         )
 
-    if _time_left():
+    if _time_left() and not skip_web_search:
         fh_article = fetch_earnings_article_text(symbol)
         if fh_article:
             articles.append(fh_article)
 
     if _time_left() and headline_url and headline_url.startswith("http"):
         direct = fetch_article_text(headline_url)
-        if direct and len(direct) > 200 and direct not in articles:
+        if direct and len(direct) > 200:
             articles.append(direct[:3500])
 
     fetched = 0
@@ -242,17 +253,19 @@ def enrich_earnings_context(
     _cycle_enrichments.append(
         {
             "symbol": symbol,
-            "headlines": len(web_items),
+            "web_headlines": len(web_items),
             "articles": len(sources),
             "verified": verified,
             "notes": cross_check[:2],
         }
     )
 
-    return EarningsEnrichment(
+    result = EarningsEnrichment(
         news_context=news_context,
         article_text=article_text,
         facts=merged,
         sources=sources,
         cross_check=cross_check,
     )
+    _enrich_cache[key] = result
+    return result

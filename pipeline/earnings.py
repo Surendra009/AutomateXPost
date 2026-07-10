@@ -283,6 +283,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
         unique_events.append(ev)
 
     pending: list[_EarningsWrite] = []
+    enriched_symbols: set[str] = set()
     drafts_created = 0
     market_drafts = 0
     now = datetime.utcnow()
@@ -345,6 +346,10 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
             if was_recently_drafted(title, EARNINGS_SOURCE):
                 continue
 
+            if symbol in enriched_symbols:
+                logger.debug("Skipping duplicate earnings enrich for %s", symbol)
+                continue
+
             pending.append(
                 _EarningsWrite(
                     symbol=symbol,
@@ -360,6 +365,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                     expire_previews=True,
                 )
             )
+            enriched_symbols.add(symbol)
             drafts_created += 1
             if not has_watchlist:
                 market_drafts += 1
