@@ -16,21 +16,30 @@ from seed import seed
 
 logger = setup_logging()
 
+_startup_ready = False
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _startup_ready
     run_security_checks()
-    init_db()
-    if os.getenv("SEED_ON_START", "false").lower() in ("1", "true", "yes"):
-        seed()
 
-    async def _deferred_pipeline_start() -> None:
-        # Let /health respond before the first ingest cycle (Railway healthcheck).
-        await asyncio.sleep(12)
-        start_pipeline(PIPELINE_INTERVAL_SECONDS)
+    async def _background_start() -> None:
+        global _startup_ready
+        try:
+            await asyncio.to_thread(init_db)
+            _startup_ready = True
+            if os.getenv("SEED_ON_START", "false").lower() in ("1", "true", "yes"):
+                await asyncio.to_thread(seed)
+            # First ingest cycle can be heavy — keep it off the healthcheck path.
+            await asyncio.sleep(12)
+            start_pipeline(PIPELINE_INTERVAL_SECONDS)
+            logger.info("PostPilot ready (dry_run=%s)", get_settings()["dry_run"])
+        except Exception as exc:
+            logger.error("Background startup failed: %s", exc, exc_info=True)
 
-    pipeline_boot = asyncio.create_task(_deferred_pipeline_start())
-    logger.info("PostPilot started (dry_run=%s)", get_settings()["dry_run"])
+    pipeline_boot = asyncio.create_task(_background_start())
+    logger.info("PostPilot listening — DB init in background (build %s)", APP_BUILD)
     yield
     pipeline_boot.cancel()
     stop_pipeline()
@@ -72,7 +81,7 @@ async def manifest():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "build": APP_BUILD}
+    return {"status": "ok", "build": APP_BUILD, "ready": _startup_ready}
 
 
 @app.get("/sw.js")

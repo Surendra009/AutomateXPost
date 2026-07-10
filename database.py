@@ -54,7 +54,7 @@ def _migrate_headline_title_fp() -> None:
         # Backfill empty title_fp for existing rows
         from pipeline.story_key import title_fingerprint
 
-        cur.execute("SELECT id, title FROM headlines WHERE title_fp IS NULL OR title_fp = ''")
+        cur.execute("SELECT id, title FROM headlines WHERE title_fp IS NULL OR title_fp = '' LIMIT 500")
         rows = cur.fetchall()
         for row_id, title in rows:
             cur.execute(
