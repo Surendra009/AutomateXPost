@@ -1,57 +1,56 @@
-"""Web news search via Serper (Google News API)."""
+"""Web news search via Google News RSS (free, no API key)."""
 
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+import urllib.parse
+from datetime import datetime
+from time import mktime
 from typing import Any
 
+import feedparser
 import httpx
 
-from config import MAX_WEB_RESULTS_PER_QUERY, SERPER_API_KEY, SERPER_NEWS_RECENCY, WEB_SEARCH_ENABLED
+from config import MAX_WEB_RESULTS_PER_QUERY, SEC_USER_AGENT, WEB_SEARCH_ENABLED
 from logging_config import setup_logging
 from security import redact_secrets
 
 logger = setup_logging()
 
-SERPER_NEWS_URL = "https://google.serper.dev/news"
-
-_RELATIVE_DATE = re.compile(
-    r"(?P<n>\d+)\s*(?P<unit>minute|minutes|min|hour|hours|hr|day|days|week|weeks)\s*ago",
-    re.I,
-)
+HTTP_HEADERS = {
+    "User-Agent": SEC_USER_AGENT,
+    "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
+}
 
 
-def serper_configured() -> bool:
-    return bool(SERPER_API_KEY)
+def web_search_configured() -> bool:
+    """Google News RSS needs no API key — enabled when WEB_SEARCH_ENABLED is true."""
+    return WEB_SEARCH_ENABLED
 
 
-def _parse_serper_date(date_str: str | None) -> datetime:
-    """Best-effort parse Serper's relative or absolute date strings."""
-    if not date_str:
-        return datetime.utcnow()
+# Backwards compat after Serper experiment
+serper_configured = web_search_configured
 
-    text = date_str.strip()
-    match = _RELATIVE_DATE.search(text)
-    if match:
-        n = int(match.group("n"))
-        unit = match.group("unit").lower()
-        if unit.startswith("min"):
-            return datetime.utcnow() - timedelta(minutes=n)
-        if unit.startswith("h"):
-            return datetime.utcnow() - timedelta(hours=n)
-        if unit.startswith("d"):
-            return datetime.utcnow() - timedelta(days=n)
-        if unit.startswith("w"):
-            return datetime.utcnow() - timedelta(weeks=n)
 
-    for fmt in ("%b %d, %Y", "%B %d, %Y", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return datetime.strptime(text[:19], fmt)
-        except ValueError:
-            continue
+def _parse_feed_date(entry: Any) -> datetime | None:
+    for attr in ("published_parsed", "updated_parsed", "created_parsed"):
+        parsed = getattr(entry, attr, None)
+        if parsed:
+            try:
+                return datetime.fromtimestamp(mktime(parsed))
+            except (ValueError, OverflowError):
+                pass
+    return None
 
-    return datetime.utcnow()
+
+def _get_summary(entry: Any) -> str:
+    for attr in ("summary", "description", "content"):
+        val = getattr(entry, attr, None)
+        if val:
+            if isinstance(val, list) and val:
+                return re.sub(r"<[^>]+>", "", val[0].get("value", ""))[:500]
+            return re.sub(r"<[^>]+>", "", str(val))[:500]
+    return ""
 
 
 def search_news(
@@ -61,70 +60,52 @@ def search_news(
     limit: int | None = None,
     recency: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Search Google News through Serper. Returns headline dicts for ingest."""
+    """Search Google News RSS (free). `recency` is ignored — freshness gated at ingest."""
     if not WEB_SEARCH_ENABLED:
-        return []
-    if not SERPER_API_KEY:
-        logger.warning("Web search skipped — set SERPER_API_KEY on Railway")
         return []
 
     limit = limit if limit is not None else MAX_WEB_RESULTS_PER_QUERY
-    payload = {
-        "q": query,
-        "num": min(limit, 10),
-        "tbs": recency or SERPER_NEWS_RECENCY,
-    }
+    encoded = urllib.parse.quote(query)
+    # when:1d biases results to the past day when supported by Google News
+    when = "1d" if (recency or "1d") in ("1d", "qdr:d", "pd", "day") else ""
+    when_param = f"+when:{when}" if when else ""
+    feed_url = (
+        f"https://news.google.com/rss/search?q={encoded}{when_param}"
+        "&hl=en-US&gl=US&ceid=US:en"
+    )
 
     try:
-        with httpx.Client(timeout=20) as client:
-            resp = client.post(
-                SERPER_NEWS_URL,
-                headers={
-                    "X-API-KEY": SERPER_API_KEY,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-            )
+        with httpx.Client(timeout=20, follow_redirects=True, headers=HTTP_HEADERS) as client:
+            resp = client.get(feed_url)
             resp.raise_for_status()
-            data = resp.json()
-    except httpx.HTTPStatusError as exc:
-        code = exc.response.status_code
-        if code == 401:
-            logger.error("Serper rejected API key (HTTP 401) — check SERPER_API_KEY")
-        elif code == 402:
-            logger.error("Serper account out of credits (HTTP 402)")
-        else:
-            logger.warning("Serper news search failed (%s): HTTP %s", query[:60], code)
-        return []
+            feed = feedparser.parse(resp.text)
     except Exception as exc:
-        logger.warning("Serper news search failed (%s): %s", query[:60], redact_secrets(str(exc)))
+        logger.warning("Google News search failed (%s): %s", query[:60], redact_secrets(str(exc)))
         return []
 
-    rows = data.get("news") or []
     items: list[dict[str, Any]] = []
-    for row in rows[:limit]:
-        title = (row.get("title") or "").strip()
-        link = (row.get("link") or "").strip()
+    for entry in feed.entries[:limit]:
+        link = getattr(entry, "link", "") or ""
+        title = getattr(entry, "title", "").strip()
         if not title or not link:
             continue
-        snippet = (row.get("snippet") or "").strip()
-        publisher = (row.get("source") or "").strip()
+        published_at = _parse_feed_date(entry)
+        if not published_at:
+            continue
         items.append(
             {
                 "source": source_label,
                 "url": link,
                 "title": title,
-                "summary": snippet[:500],
-                "published_at": _parse_serper_date(row.get("date")),
+                "summary": _get_summary(entry),
+                "published_at": published_at,
                 "search_query": query,
-                "publisher": publisher,
             }
         )
 
     if items:
-        logger.debug("Serper: %d results for %r", len(items), query[:80])
+        logger.debug("Google News: %d results for %r", len(items), query[:80])
     return items
 
 
-# Backwards-compatible alias (all callers should use search_news).
 search_google_news = search_news

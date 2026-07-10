@@ -45,7 +45,7 @@ MAX_ITEMS_PER_TICKER = 3
 
 
 def fetch_web_news() -> list[dict[str, Any]]:
-    """Primary discovery: Serper news search for earnings, mergers, and company news."""
+    """Primary discovery: Google News RSS for earnings, mergers, and company news."""
     if not WEB_SEARCH_ENABLED:
         return []
 

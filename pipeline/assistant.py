@@ -131,7 +131,7 @@ def search_posted(phrase: str, terms: list[str], *, limit: int = 8) -> list[dict
 
 
 def fetch_topic_news(query: str, *, limit: int | None = None) -> list[dict[str, Any]]:
-    """Search Serper news for any topic — tries several query shapes."""
+    """Search Google News for any topic — tries several query shapes."""
     limit = limit or min(MAX_WEB_RESULTS_PER_QUERY, 8)
     query = query.strip()
     if not query:
