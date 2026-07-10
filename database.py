@@ -8,7 +8,27 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from config import DATABASE_URL, DEFAULT_SETTINGS
 from models import AppSetting
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
+
+
+def _enable_sqlite_wal() -> None:
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+    db_path = DATABASE_URL.replace("sqlite:///", "", 1)
+    if not db_path or db_path == DATABASE_URL:
+        return
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.close()
+    except Exception:
+        pass
 
 
 def _migrate_headline_title_fp() -> None:
@@ -86,6 +106,7 @@ def _migrate_schema() -> None:
 
 
 def init_db() -> None:
+    _enable_sqlite_wal()
     SQLModel.metadata.create_all(engine)
     _migrate_headline_title_fp()
     _migrate_schema()

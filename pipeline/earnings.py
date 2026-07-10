@@ -206,7 +206,7 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
         facts,
         source_text=enrichment.news_context or summary,
         article_text=enrichment.article_text,
-        allow_llm=True,
+        allow_llm=False,
     )
     if lines:
         line1, line2, line3 = lines

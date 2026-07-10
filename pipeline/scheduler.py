@@ -52,11 +52,26 @@ _pipeline_task: asyncio.Task | None = None
 _scheduled_task: asyncio.Task | None = None
 _manual_run_task: asyncio.Task | None = None
 _pipeline_running = False
+_pipeline_started_at: datetime | None = None
+
+_PIPELINE_STUCK_SECONDS = 900  # 15 min — reset flag so UI/API recover
 
 
-def get_pipeline_status() -> dict:
+def _maybe_reset_stuck_pipeline() -> None:
+    global _pipeline_running, _pipeline_started_at
+    if not _pipeline_running or not _pipeline_started_at:
+        return
+    elapsed = (datetime.utcnow() - _pipeline_started_at).total_seconds()
+    if elapsed > _PIPELINE_STUCK_SECONDS:
+        logger.warning("Pipeline running flag stale (%.0fs) — resetting", elapsed)
+        _pipeline_running = False
+        _pipeline_started_at = None
+
+
+def get_pipeline_status(*, lightweight: bool = False) -> dict:
     """Return last pipeline run metadata for the settings UI."""
-    return {
+    _maybe_reset_stuck_pipeline()
+    status = {
         "running": _pipeline_running,
         "last_run_at": get_setting("pipeline_last_run_at"),
         "last_ingest_count": get_setting("pipeline_last_ingest_count", 0),
@@ -65,13 +80,18 @@ def get_pipeline_status() -> dict:
         "last_expired": get_setting("pipeline_last_expired", 0),
         "last_error": get_setting("pipeline_last_error"),
         "last_ingest_by_source": get_setting("pipeline_last_ingest_by_source", {}),
-        "news_sources": _active_news_sources(),
-        "finnhub": get_finnhub_status(),
-        "earnings": get_earnings_pipeline_summary(),
-        "earnings_enrich": earnings_enrich_summary(),
         "schedule": schedule_status(),
-        "feedback": feedback_stats(),
     }
+    if lightweight:
+        status["earnings_enrich"] = earnings_enrich_summary()
+        return status
+
+    status["news_sources"] = _active_news_sources()
+    status["finnhub"] = get_finnhub_status()
+    status["earnings"] = get_earnings_pipeline_summary()
+    status["earnings_enrich"] = earnings_enrich_summary()
+    status["feedback"] = feedback_stats()
+    return status
 
 
 def _active_news_sources() -> list[dict]:
@@ -147,7 +167,7 @@ def trigger_pipeline_cycle(*, force: bool = False) -> dict:
     global _manual_run_task
 
     if _pipeline_running:
-        return {"started": False, "reason": "already_running", **get_pipeline_status()}
+        return {"started": False, "reason": "already_running", **get_pipeline_status(lightweight=True)}
 
     async def _run() -> None:
         try:
@@ -160,18 +180,19 @@ def trigger_pipeline_cycle(*, force: bool = False) -> dict:
 
 
 def _run_pipeline_cycle(*, force: bool = False) -> dict:
-    global _pipeline_running
+    global _pipeline_running, _pipeline_started_at
 
     if _pipeline_running:
-        return get_pipeline_status()
+        return get_pipeline_status(lightweight=True)
 
     decision = evaluate_schedule(force=force)
     if not decision.run:
         logger.debug("Pipeline skipped: %s", decision.reason)
         set_setting("pipeline_last_schedule_skip", decision.reason)
-        return get_pipeline_status()
+        return get_pipeline_status(lightweight=True)
 
     _pipeline_running = True
+    _pipeline_started_at = datetime.utcnow()
     ingest_count = 0
     expired = 0
     budget = DraftBudget()
@@ -182,7 +203,7 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
             if not get_setting("pipeline_enabled", True):
                 logger.debug("Pipeline disabled, skipping cycle")
                 _save_cycle_stats()
-                return get_pipeline_status()
+                return get_pipeline_status(lightweight=True)
 
             paused_until = get_setting("paused_until")
             if paused_until:
@@ -191,7 +212,7 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                     if datetime.utcnow() < pause_dt:
                         logger.debug("Pipeline paused until %s", paused_until)
                         _save_cycle_stats()
-                        return get_pipeline_status()
+                        return get_pipeline_status(lightweight=True)
                 except ValueError:
                     pass
 
@@ -274,8 +295,9 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
         check_pipeline_health(budget.created, str(e))
     finally:
         _pipeline_running = False
+        _pipeline_started_at = None
 
-    return get_pipeline_status()
+    return get_pipeline_status(lightweight=True)
 
 
 async def pipeline_loop(interval: int = 300) -> None:

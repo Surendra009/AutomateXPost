@@ -370,9 +370,10 @@ def get_settings_route(request: Request):
     require_auth(request)
     from config import get_settings as app_config
     settings = get_all_settings()
+    pipeline = get_pipeline_status()
     settings["config"] = app_config()
-    settings["pipeline"] = get_pipeline_status()
-    settings["finnhub"] = get_pipeline_status().get("finnhub") or {}
+    settings["pipeline"] = pipeline
+    settings["finnhub"] = pipeline.get("finnhub") or {}
     settings["push"] = {
         "configured": push_configured(),
         "public_key": get_vapid_public_key() if push_configured() else None,
@@ -439,7 +440,7 @@ def teams_test(request: Request):
 @router.get("/pipeline/status")
 def pipeline_status(request: Request):
     require_auth(request)
-    return get_pipeline_status()
+    return get_pipeline_status(lightweight=True)
 
 
 @router.get("/finnhub/test")

@@ -9,8 +9,6 @@ from config import EARNINGS_PREVIEW_DAYS_FORWARD
 from database import get_setting
 from pipeline.earnings import (
     EARNINGS_SOURCE,
-    _build_preview,
-    _build_results,
     _fmt_eps,
     _fmt_money,
     _has_actual,
@@ -109,11 +107,13 @@ def get_earnings_snapshot(
         if watchlist and not on_watchlist and not query_symbols:
             continue
         if not watchlist and not query_symbols:
-            # No scope — only include rows with reported actuals (beat/miss)
             if not _has_actual(event):
                 continue
-            built = _build_results(event)
-            if not built or built[3] != "high":
+            eps_word = _surprise_word(event.get("epsActual"), event.get("epsEstimate"))
+            rev_word = _surprise_word(
+                event.get("revenueActual"), event.get("revenueEstimate"), tol=0.005
+            )
+            if eps_word not in ("beat", "miss") and rev_word not in ("beat", "miss"):
                 continue
 
         try:
