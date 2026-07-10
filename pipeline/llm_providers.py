@@ -8,8 +8,12 @@ import httpx
 
 from config import (
     ANTHROPIC_API_KEY,
+    ANTHROPIC_DRAFT_MODEL,
+    ANTHROPIC_FILTER_MODEL,
     DEEPSEEK_API_BASE,
-    FILTER_MODEL,
+    DEEPSEEK_DEFAULT_MODEL,
+    OPENAI_DRAFT_MODEL,
+    OPENAI_FILTER_MODEL,
     OPENAI_API_KEY,
     get_deepseek_key,
 )
@@ -32,6 +36,75 @@ def _set_llm_error(message: str | None) -> None:
 
 def deepseek_configured() -> bool:
     return bool(get_deepseek_key())
+
+
+_DEEPSEEK_MODEL_ALIASES = {
+    "deepseek-v4-flash": "deepseek-chat",
+    "deepseek-v4": "deepseek-chat",
+    "deepseek-v3": "deepseek-chat",
+    "deepseek-chat-v3": "deepseek-chat",
+}
+
+
+def _looks_deepseek_model(model: str) -> bool:
+    lower = model.lower()
+    return lower.startswith("deepseek") or lower in _DEEPSEEK_MODEL_ALIASES
+
+
+def _looks_anthropic_model(model: str) -> bool:
+    lower = model.lower()
+    return lower.startswith("claude")
+
+
+def _looks_openai_model(model: str) -> bool:
+    lower = model.lower()
+    return lower.startswith("gpt") or lower.startswith("o1") or lower.startswith("o3")
+
+
+def resolve_model_for_provider(provider: str, model: str, *, role: str = "filter") -> str:
+    """Map env model names to a valid model id for the chosen provider."""
+    raw = (model or "").strip()
+    lower = raw.lower()
+    default_anthropic = ANTHROPIC_DRAFT_MODEL if role == "draft" else ANTHROPIC_FILTER_MODEL
+    default_openai = OPENAI_DRAFT_MODEL if role == "draft" else OPENAI_FILTER_MODEL
+
+    if provider == "deepseek":
+        if not raw or _looks_anthropic_model(raw) or _looks_openai_model(raw):
+            return DEEPSEEK_DEFAULT_MODEL
+        return _DEEPSEEK_MODEL_ALIASES.get(lower, raw)
+
+    if provider == "anthropic":
+        if not raw or _looks_deepseek_model(raw) or _looks_openai_model(raw):
+            return default_anthropic
+        return raw
+
+    if provider == "openai":
+        if not raw or _looks_deepseek_model(raw) or _looks_anthropic_model(raw):
+            return default_openai
+        return raw
+
+    return raw or DEEPSEEK_DEFAULT_MODEL
+
+
+def _anthropic_error_message(exc: Exception) -> str:
+    status = getattr(exc, "status_code", None)
+    if status == 404:
+        return (
+            "Anthropic model not found — remove FILTER_MODEL=DeepSeek-* from Railway; "
+            "use FILTER_PROVIDER=deepseek and FILTER_MODEL=deepseek-chat, or "
+            "ANTHROPIC_FILTER_MODEL=claude-3-5-haiku-20241022 for Claude"
+        )
+    if status == 401:
+        return "Anthropic rejected the API key (HTTP 401)"
+    if status == 429:
+        return "Anthropic rate limit hit (HTTP 429)"
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        err = body.get("error", {})
+        msg = err.get("message") if isinstance(err, dict) else None
+        if msg:
+            return f"Anthropic HTTP {status}: {redact_secrets(str(msg))[:160]}"
+    return _http_error_message("Anthropic", exc)
 
 
 def _http_error_message(label: str, exc: Exception) -> str:
@@ -165,7 +238,7 @@ def _call_anthropic(system: str, user: str, model: str, *, max_tokens: int = 102
         _set_llm_error(None)
         return message.content[0].text
     except Exception as exc:
-        msg = _http_error_message("Anthropic", exc)
+        msg = _anthropic_error_message(exc)
         _set_llm_error(msg)
         logger.error("Anthropic API error: %s", msg)
         if retry:
@@ -194,16 +267,20 @@ def call_llm(
     provider: str = "auto",
     max_tokens: int = 1024,
     retry: bool = True,
+    role: str = "filter",
 ) -> str | None:
     """Route to DeepSeek, Anthropic, or OpenAI based on provider setting."""
     resolved = resolve_provider(provider)
+    model = resolve_model_for_provider(resolved, model, role=role)
+    explicit = (provider or "auto").lower().strip()
     if resolved == "deepseek":
         out = _call_deepseek(system, user, model, max_tokens=max_tokens)
         if out:
             return out
-        if retry and ANTHROPIC_API_KEY:
-            logger.info("DeepSeek failed — falling back to Anthropic")
-            return _call_anthropic(system, user, FILTER_MODEL, max_tokens=max_tokens, retry=False)
+        if retry and explicit == "auto" and ANTHROPIC_API_KEY:
+            logger.info("DeepSeek failed — falling back to Anthropic (%s)", ANTHROPIC_FILTER_MODEL)
+            fallback = resolve_model_for_provider("anthropic", ANTHROPIC_FILTER_MODEL, role=role)
+            return _call_anthropic(system, user, fallback, max_tokens=max_tokens, retry=False)
         return None
     if resolved == "openai":
         return _call_openai(system, user, model, max_tokens=max_tokens)
@@ -220,6 +297,8 @@ def test_llm_connection() -> dict:
 
     draft_p = resolve_provider(DRAFT_PROVIDER)
     filter_p = resolve_provider(FILTER_PROVIDER)
+    effective_filter_model = resolve_model_for_provider(filter_p, FILTER_MODEL, role="filter")
+    effective_draft_model = resolve_model_for_provider(draft_p, DRAFT_MODEL, role="draft")
     result = {
         "deepseek_configured": deepseek_configured(),
         "deepseek_env_var": None,
@@ -227,6 +306,8 @@ def test_llm_connection() -> dict:
         "filter_provider": filter_p,
         "draft_model": DRAFT_MODEL,
         "filter_model": FILTER_MODEL,
+        "effective_draft_model": effective_draft_model,
+        "effective_filter_model": effective_filter_model,
         "filter_ok": False,
         "draft_ok": False,
         "error": None,
@@ -253,6 +334,7 @@ def test_llm_connection() -> dict:
         provider=FILTER_PROVIDER,
         max_tokens=32,
         retry=False,
+        role="filter",
     )
     if filter_reply:
         result["filter_ok"] = True
@@ -267,6 +349,7 @@ def test_llm_connection() -> dict:
         provider=DRAFT_PROVIDER,
         max_tokens=8,
         retry=False,
+        role="draft",
     )
     if draft_reply:
         result["draft_ok"] = True
@@ -287,7 +370,9 @@ def llm_status() -> dict:
         "openai_configured": bool(OPENAI_API_KEY),
         "draft_provider": draft_p,
         "draft_model": DRAFT_MODEL,
+        "effective_draft_model": resolve_model_for_provider(draft_p, DRAFT_MODEL, role="draft"),
         "filter_provider": filter_p,
         "filter_model": FILTER_MODEL,
+        "effective_filter_model": resolve_model_for_provider(filter_p, FILTER_MODEL, role="filter"),
         "last_error": get_last_llm_error(),
     }

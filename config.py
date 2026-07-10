@@ -10,7 +10,7 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-APP_BUILD = os.getenv("APP_BUILD", "63")
+APP_BUILD = os.getenv("APP_BUILD", "64")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
@@ -57,6 +57,11 @@ FILTER_MODEL = os.getenv("FILTER_MODEL", "deepseek-chat")
 DRAFT_MODEL = os.getenv("DRAFT_MODEL", "deepseek-chat")
 DRAFT_PROVIDER = os.getenv("DRAFT_PROVIDER", "auto")  # auto | deepseek | anthropic | openai
 FILTER_PROVIDER = os.getenv("FILTER_PROVIDER", "auto")
+ANTHROPIC_FILTER_MODEL = os.getenv("ANTHROPIC_FILTER_MODEL", "claude-3-5-haiku-20241022")
+ANTHROPIC_DRAFT_MODEL = os.getenv("ANTHROPIC_DRAFT_MODEL", "claude-3-5-sonnet-20241022")
+OPENAI_FILTER_MODEL = os.getenv("OPENAI_FILTER_MODEL", "gpt-4o-mini")
+OPENAI_DRAFT_MODEL = os.getenv("OPENAI_DRAFT_MODEL", "gpt-4o-mini")
+DEEPSEEK_DEFAULT_MODEL = os.getenv("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat")
 DRAFT_MAX_TOKENS = int(os.getenv("DRAFT_MAX_TOKENS", "1200"))
 DRAFT_ARTICLE_CHARS = int(os.getenv("DRAFT_ARTICLE_CHARS", "4500"))
 # Chat assistant: Haiku is best on Anthropic (fast/cheap). Alternatives if no Claude:
@@ -64,7 +69,7 @@ DRAFT_ARTICLE_CHARS = int(os.getenv("DRAFT_ARTICLE_CHARS", "4500"))
 #   CHAT_PROVIDER=openai  CHAT_MODEL=gpt-4.1-nano  (cheaper, still capable)
 CHAT_PROVIDER = os.getenv("CHAT_PROVIDER", "auto")  # auto | anthropic | openai
 CHAT_MODEL = os.getenv("CHAT_MODEL", "").strip()
-CHAT_ANTHROPIC_MODEL = os.getenv("CHAT_ANTHROPIC_MODEL", FILTER_MODEL)
+CHAT_ANTHROPIC_MODEL = os.getenv("CHAT_ANTHROPIC_MODEL", ANTHROPIC_FILTER_MODEL)
 CHAT_OPENAI_MODEL = os.getenv("CHAT_OPENAI_MODEL", "gpt-4o-mini")
 PIPELINE_INTERVAL_SECONDS = 300  # 5 min
 PIPELINE_TIMEZONE = os.getenv("PIPELINE_TIMEZONE", "America/New_York")

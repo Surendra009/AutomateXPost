@@ -292,6 +292,7 @@ def draft_posts(
             model=DRAFT_MODEL,
             provider=DRAFT_PROVIDER,
             max_tokens=DRAFT_MAX_TOKENS,
+            role="draft",
         )
         if not raw:
             _discard_headline(headline, "draft LLM failed")
@@ -434,6 +435,7 @@ def regenerate_draft(draft_id: int) -> tuple[Draft | None, str | None]:
             provider=DRAFT_PROVIDER,
             max_tokens=DRAFT_MAX_TOKENS,
             retry=attempt == 0,
+            role="draft",
         )
         if not raw:
             last_reason = "LLM request failed — check DeepSeek key and Railway logs"

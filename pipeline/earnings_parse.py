@@ -288,6 +288,7 @@ def llm_earnings_highlight(source_text: str, ticker: str) -> str | None:
         provider=FILTER_PROVIDER,
         max_tokens=80,
         retry=False,
+        role="filter",
     )
     _llm_highlight_calls += 1
     if not raw:

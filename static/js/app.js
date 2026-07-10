@@ -778,11 +778,11 @@ async function loadSettings() {
       </div>
       <div class="status-row">
         <span>Draft LLM</span>
-        <span class="${data.llm?.deepseek_configured ? 'status-ok' : 'status-no'}">${esc((data.llm?.draft_provider || '—') + ' / ' + (data.llm?.draft_model || '—'))}</span>
+        <span class="${data.llm?.deepseek_configured ? 'status-ok' : 'status-no'}">${esc((data.llm?.draft_provider || '—') + ' / ' + (data.llm?.effective_draft_model || data.llm?.draft_model || '—'))}</span>
       </div>
       <div class="status-row">
         <span>Filter LLM</span>
-        <span class="${data.llm?.filter_provider && data.llm.filter_provider !== 'none' ? 'status-ok' : 'status-no'}">${esc((data.llm?.filter_provider || '—') + ' / ' + (data.llm?.filter_model || '—'))}</span>
+        <span class="${data.llm?.filter_provider && data.llm.filter_provider !== 'none' ? 'status-ok' : 'status-no'}">${esc((data.llm?.filter_provider || '—') + ' / ' + (data.llm?.effective_filter_model || data.llm?.filter_model || '—'))}</span>
       </div>
       <div class="status-row">
         <span>Finnhub</span>
@@ -1227,7 +1227,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=63').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=64').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

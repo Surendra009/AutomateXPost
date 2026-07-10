@@ -77,6 +77,7 @@ def _call_claude(system: str, user: str, model: str, retry: bool = True, max_tok
         provider=FILTER_PROVIDER,
         max_tokens=max_tokens,
         retry=retry,
+        role="filter",
     )
 
 
