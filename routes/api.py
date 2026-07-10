@@ -368,32 +368,65 @@ def get_history(request: Request):
 @router.get("/settings")
 def get_settings_route(request: Request):
     require_auth(request)
-    from config import get_settings as app_config
+    from config import DEFAULT_SETTINGS, get_settings as app_config
     from logging_config import setup_logging
 
     logger = setup_logging()
+    settings: dict = dict(DEFAULT_SETTINGS)
+
     try:
         settings = get_all_settings()
-        pipeline = get_pipeline_status()
-        settings["config"] = app_config()
+    except Exception as exc:
+        logger.error("get_all_settings failed: %s", exc, exc_info=True)
+
+    try:
+        pipeline = get_pipeline_status(lightweight=True)
+        pipeline["finnhub"] = get_finnhub_status()
+        try:
+            from pipeline.earnings_calendar import get_earnings_pipeline_summary
+
+            pipeline["earnings"] = get_earnings_pipeline_summary()
+        except Exception as exc:
+            logger.warning("earnings panel failed: %s", exc)
+            pipeline["earnings"] = {
+                "configured": False,
+                "watchlist_count": len(settings.get("watchlist") or []),
+                "reporting_today": 0,
+                "upcoming": [],
+            }
         settings["pipeline"] = pipeline
         settings["finnhub"] = pipeline.get("finnhub") or {}
-        settings["push"] = {
-            "configured": push_configured(),
-            "public_key": get_vapid_public_key() if push_configured() else None,
-        }
-        settings["teams"] = {
-            "configured": teams_configured(),
-        }
-        settings["discord"] = {
-            "configured": discord_configured(),
-        }
-        settings["llm"] = llm_status()
-        settings["chat"] = chat_llm_status()
-        return settings
     except Exception as exc:
-        logger.error("Settings load failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="Settings failed to load") from exc
+        logger.error("pipeline status failed: %s", exc, exc_info=True)
+        settings["pipeline"] = {"running": False, "last_error": str(exc)[:200]}
+        settings["finnhub"] = {}
+
+    try:
+        settings["config"] = app_config()
+    except Exception as exc:
+        logger.warning("app config failed: %s", exc)
+        settings["config"] = {"build": "?"}
+
+    settings["push"] = {
+        "configured": push_configured(),
+        "public_key": get_vapid_public_key() if push_configured() else None,
+    }
+    settings["teams"] = {"configured": teams_configured()}
+    settings["discord"] = {"configured": discord_configured()}
+
+    try:
+        settings["llm"] = llm_status()
+    except Exception as exc:
+        logger.warning("llm_status failed: %s", exc)
+        settings["llm"] = {}
+
+    try:
+        settings["chat"] = chat_llm_status()
+    except Exception as exc:
+        logger.warning("chat_llm_status failed: %s", exc)
+        settings["chat"] = {}
+
+    return settings
 
 
 @router.get("/push/vapid-public-key")

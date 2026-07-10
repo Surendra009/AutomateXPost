@@ -132,10 +132,38 @@ def get_setting(key: str, default: Any = None) -> Any:
         row = session.get(AppSetting, key)
         if not row:
             return default
-        value = json.loads(row.value)
+        try:
+            value = json.loads(row.value)
+        except json.JSONDecodeError:
+            return default
         if value is None:
             return default
         return value
+
+
+def _coerce_settings(result: dict) -> dict:
+    """Ensure settings values match expected types after DB load."""
+    if not isinstance(result.get("watchlist"), list):
+        result["watchlist"] = []
+    if not isinstance(result.get("search_topics"), list):
+        result["search_topics"] = []
+    if result.get("paused_until") == "":
+        result["paused_until"] = None
+    return result
+
+
+def get_all_settings() -> dict:
+    with get_session() as session:
+        rows = session.exec(select(AppSetting)).all()
+        result = dict(DEFAULT_SETTINGS)
+        for row in rows:
+            try:
+                value = json.loads(row.value)
+            except json.JSONDecodeError:
+                continue
+            if value is not None:
+                result[row.key] = value
+        return _coerce_settings(result)
 
 
 def set_setting(key: str, value: Any) -> None:
@@ -146,15 +174,6 @@ def set_setting(key: str, value: Any) -> None:
         else:
             session.add(AppSetting(key=key, value=json.dumps(value)))
         session.commit()
-
-
-def get_all_settings() -> dict:
-    with get_session() as session:
-        rows = session.exec(select(AppSetting)).all()
-        result = dict(DEFAULT_SETTINGS)
-        for row in rows:
-            result[row.key] = json.loads(row.value)
-        return result
 
 
 def count_posts_today() -> int:

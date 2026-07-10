@@ -73,6 +73,14 @@ def _maybe_reset_stuck_pipeline() -> None:
 def get_pipeline_status(*, lightweight: bool = False) -> dict:
     """Return last pipeline run metadata for the settings UI."""
     _maybe_reset_stuck_pipeline()
+    ingest_by_source = get_setting("pipeline_last_ingest_by_source", {})
+    if not isinstance(ingest_by_source, dict):
+        ingest_by_source = {}
+    try:
+        sched = schedule_status()
+    except Exception as exc:
+        logger.warning("schedule_status failed: %s", exc)
+        sched = {"error": str(exc)[:120]}
     status = {
         "running": _pipeline_running,
         "last_run_at": get_setting("pipeline_last_run_at"),
@@ -81,18 +89,30 @@ def get_pipeline_status(*, lightweight: bool = False) -> dict:
         "last_filter_kept": get_setting("pipeline_last_filter_kept", 0),
         "last_expired": get_setting("pipeline_last_expired", 0),
         "last_error": get_setting("pipeline_last_error"),
-        "last_ingest_by_source": get_setting("pipeline_last_ingest_by_source", {}),
-        "schedule": schedule_status(),
+        "last_ingest_by_source": ingest_by_source,
+        "schedule": sched,
     }
     if lightweight:
         status["earnings_enrich"] = earnings_enrich_summary()
         return status
 
-    status["news_sources"] = _active_news_sources()
+    try:
+        status["news_sources"] = _active_news_sources()
+    except Exception as exc:
+        logger.warning("news_sources failed: %s", exc)
+        status["news_sources"] = []
     status["finnhub"] = get_finnhub_status()
-    status["earnings"] = get_earnings_pipeline_summary()
+    try:
+        status["earnings"] = get_earnings_pipeline_summary()
+    except Exception as exc:
+        logger.warning("earnings summary failed: %s", exc)
+        status["earnings"] = {"configured": False, "reporting_today": 0, "upcoming": []}
     status["earnings_enrich"] = earnings_enrich_summary()
-    status["feedback"] = feedback_stats()
+    try:
+        status["feedback"] = feedback_stats()
+    except Exception as exc:
+        logger.warning("feedback_stats failed: %s", exc)
+        status["feedback"] = {}
     return status
 
 
@@ -137,7 +157,9 @@ def _active_news_sources() -> list[dict]:
 
 def get_finnhub_status() -> dict:
     cached = get_setting("finnhub_last_test")
-    return cached or {}
+    if isinstance(cached, dict):
+        return cached
+    return {}
 
 
 def _save_cycle_stats(
