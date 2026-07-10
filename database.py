@@ -132,7 +132,10 @@ def get_setting(key: str, default: Any = None) -> Any:
         row = session.get(AppSetting, key)
         if not row:
             return default
-        return json.loads(row.value)
+        value = json.loads(row.value)
+        if value is None:
+            return default
+        return value
 
 
 def set_setting(key: str, value: Any) -> None:

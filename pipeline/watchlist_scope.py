@@ -1,7 +1,9 @@
 """Watchlist scoping — structured feeds only run for user-configured tickers."""
 
 
-def normalized_watchlist(watchlist: list[str]) -> list[str]:
+def normalized_watchlist(watchlist: list[str] | None) -> list[str]:
+    if not watchlist or not isinstance(watchlist, list):
+        return []
     seen: set[str] = set()
     out: list[str] = []
     for raw in watchlist:

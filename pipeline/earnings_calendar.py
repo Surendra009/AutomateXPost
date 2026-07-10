@@ -18,6 +18,9 @@ from pipeline.earnings import (
 )
 from pipeline.finnhub_api import get_finnhub_key
 from pipeline.watchlist_scope import in_watchlist, normalized_watchlist
+from logging_config import setup_logging
+
+logger = setup_logging()
 
 
 def dedupe_calendar_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -134,32 +137,45 @@ def get_earnings_snapshot(
 
 def get_earnings_pipeline_summary() -> dict[str, Any]:
     """Lightweight earnings status for the settings / pipeline panel."""
-    watchlist = normalized_watchlist(get_setting("watchlist", []))
-    if not get_finnhub_key():
+    try:
+        watchlist = normalized_watchlist(get_setting("watchlist", []))
+        if not get_finnhub_key():
+            return {
+                "configured": False,
+                "watchlist_count": len(watchlist),
+                "reporting_today": 0,
+                "upcoming": [],
+                "hint": "Set FINNHUB_KEY for structured earnings drafts and calendar",
+            }
+
+        today = datetime.utcnow().date().isoformat()
+        snapshot = get_earnings_snapshot(watchlist=watchlist, limit=20)
+        today_rows = [r for r in snapshot if r["date"] == today]
+        upcoming = [r for r in snapshot if r["status"] == "preview"][:6]
+
+        hint = None
+        if not watchlist:
+            hint = "Add tickers to your watchlist for earnings previews (beat/miss still drafts without one)"
+        elif not today_rows and not upcoming:
+            hint = "No watchlist tickers reporting earnings in the next few days"
+
         return {
-            "configured": False,
+            "configured": True,
+            "watchlist_count": len(watchlist),
+            "reporting_today": len(today_rows),
+            "upcoming": upcoming,
+            "today": today_rows[:6],
+            "hint": hint,
+        }
+    except Exception as exc:
+        logger.warning("Earnings summary failed: %s", exc)
+        watchlist = normalized_watchlist(get_setting("watchlist", []))
+        return {
+            "configured": bool(get_finnhub_key()),
             "watchlist_count": len(watchlist),
             "reporting_today": 0,
             "upcoming": [],
-            "hint": "Set FINNHUB_KEY for structured earnings drafts and calendar",
+            "today": [],
+            "hint": "Earnings calendar temporarily unavailable",
+            "error": str(exc)[:120],
         }
-
-    today = datetime.utcnow().date().isoformat()
-    snapshot = get_earnings_snapshot(watchlist=watchlist, limit=20)
-    today_rows = [r for r in snapshot if r["date"] == today]
-    upcoming = [r for r in snapshot if r["status"] == "preview"][:6]
-
-    hint = None
-    if not watchlist:
-        hint = "Add tickers to your watchlist for earnings previews (beat/miss still drafts without one)"
-    elif not today_rows and not upcoming:
-        hint = "No watchlist tickers reporting earnings in the next few days"
-
-    return {
-        "configured": True,
-        "watchlist_count": len(watchlist),
-        "reporting_today": len(today_rows),
-        "upcoming": upcoming,
-        "today": today_rows[:6],
-        "hint": hint,
-    }

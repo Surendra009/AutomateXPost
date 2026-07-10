@@ -17,6 +17,9 @@ from config import (
     WEEKEND_INTERVAL_HOURS,
 )
 from database import get_setting
+from logging_config import setup_logging
+
+logger = setup_logging()
 
 CATCHUP_SETTING_KEY = "pipeline_last_overnight_catchup_at"
 
@@ -30,7 +33,12 @@ class ScheduleDecision:
 
 
 def local_now(tz_name: str | None = None) -> datetime:
-    tz = ZoneInfo(tz_name or PIPELINE_TIMEZONE)
+    name = tz_name or PIPELINE_TIMEZONE
+    try:
+        tz = ZoneInfo(name)
+    except Exception:
+        logger.warning("Timezone %s unavailable, using UTC", name)
+        tz = ZoneInfo("UTC")
     return datetime.now(tz)
 
 

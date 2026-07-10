@@ -369,24 +369,31 @@ def get_history(request: Request):
 def get_settings_route(request: Request):
     require_auth(request)
     from config import get_settings as app_config
-    settings = get_all_settings()
-    pipeline = get_pipeline_status()
-    settings["config"] = app_config()
-    settings["pipeline"] = pipeline
-    settings["finnhub"] = pipeline.get("finnhub") or {}
-    settings["push"] = {
-        "configured": push_configured(),
-        "public_key": get_vapid_public_key() if push_configured() else None,
-    }
-    settings["teams"] = {
-        "configured": teams_configured(),
-    }
-    settings["discord"] = {
-        "configured": discord_configured(),
-    }
-    settings["llm"] = llm_status()
-    settings["chat"] = chat_llm_status()
-    return settings
+    from logging_config import setup_logging
+
+    logger = setup_logging()
+    try:
+        settings = get_all_settings()
+        pipeline = get_pipeline_status()
+        settings["config"] = app_config()
+        settings["pipeline"] = pipeline
+        settings["finnhub"] = pipeline.get("finnhub") or {}
+        settings["push"] = {
+            "configured": push_configured(),
+            "public_key": get_vapid_public_key() if push_configured() else None,
+        }
+        settings["teams"] = {
+            "configured": teams_configured(),
+        }
+        settings["discord"] = {
+            "configured": discord_configured(),
+        }
+        settings["llm"] = llm_status()
+        settings["chat"] = chat_llm_status()
+        return settings
+    except Exception as exc:
+        logger.error("Settings load failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Settings failed to load") from exc
 
 
 @router.get("/push/vapid-public-key")
