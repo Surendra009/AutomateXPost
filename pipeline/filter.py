@@ -1,6 +1,7 @@
 """LLM filter step — classify headline relevance."""
 
 import json
+import re
 from typing import Any
 
 from sqlmodel import select
@@ -12,8 +13,9 @@ from models import Headline
 from pipeline.ai_news import enrich_ai_classification, is_ai_source, is_material_ai_update
 from pipeline.classify_cache import cache_classification, get_cached_classification, prune_classification_cache
 from pipeline.freshness import is_fresh
+from pipeline.earnings_dedup import extract_ticker_from_text
 from pipeline.llm_providers import call_llm, get_last_llm_error, resolve_provider
-from pipeline.noise import is_obvious_noise
+from pipeline.noise import TRADE_SIGNALS, is_obvious_noise
 from pipeline.prioritize import composite_score
 
 logger = setup_logging()
@@ -68,7 +70,7 @@ tradeable=true for category ai when impact is high or med.
 Be strict. When in doubt, relevant=false. JSON array only."""
 
 
-def _call_claude(system: str, user: str, model: str, retry: bool = True, max_tokens: int = 4096) -> str | None:
+def _call_claude(system: str, user: str, model: str, retry: bool = True, max_tokens: int = 8192) -> str | None:
     """Backward-compatible wrapper — routes through configured provider."""
     return call_llm(
         system,
@@ -81,19 +83,81 @@ def _call_claude(system: str, user: str, model: str, retry: bool = True, max_tok
     )
 
 
+def _extract_json_substring(text: str) -> str | None:
+    start = text.find("[")
+    end = text.rfind("]")
+    if start >= 0 and end > start:
+        return text[start : end + 1]
+    return None
+
+
+def _normalize_classification(data: dict[str, Any]) -> dict[str, Any]:
+    out = dict(data)
+    relevant = out.get("relevant", False)
+    if isinstance(relevant, str):
+        out["relevant"] = relevant.strip().lower() in ("true", "yes", "1")
+    else:
+        out["relevant"] = bool(relevant)
+
+    try:
+        out["relevance_score"] = float(out.get("relevance_score", 0) or 0)
+    except (TypeError, ValueError):
+        out["relevance_score"] = 0.0
+
+    tickers = out.get("tickers") or []
+    if isinstance(tickers, str):
+        tickers = [t.strip() for t in tickers.replace("/", ",").split(",") if t.strip()]
+    out["tickers"] = [str(t).upper().strip().lstrip("$") for t in tickers if t]
+
+    impact = str(out.get("impact", "low") or "low").lower()
+    if impact not in ("high", "med", "low"):
+        impact = "low"
+    out["impact"] = impact
+
+    category = str(out.get("category", "other") or "other").lower()
+    out["category"] = category
+    return out
+
+
+def _enrich_classification_tickers(classification: dict[str, Any], headline: Headline) -> dict[str, Any]:
+    out = dict(classification)
+    tickers = list(out.get("tickers") or [])
+    if not tickers:
+        sym = extract_ticker_from_text(headline.title)
+        if sym:
+            tickers = [sym]
+    if not tickers:
+        for match in re.finditer(r"\$([A-Z]{1,5})\b", headline.title or ""):
+            tickers.append(match.group(1))
+    if tickers:
+        out["tickers"] = tickers
+    return out
+
+
 def _parse_json_array(text: str) -> list[dict] | None:
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
-        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    try:
-        data = json.loads(text)
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:]).strip()
+
+    candidates = [text]
+    extracted = _extract_json_substring(text)
+    if extracted and extracted not in candidates:
+        candidates.append(extracted)
+
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
         if isinstance(data, list):
-            return data
+            return [_normalize_classification(item) for item in data if isinstance(item, dict)]
         if isinstance(data, dict):
-            return [data]
-    except json.JSONDecodeError as e:
-        logger.warning("Malformed LLM JSON: %s", e)
+            for key in ("items", "classifications", "results", "headlines"):
+                nested = data.get(key)
+                if isinstance(nested, list):
+                    return [_normalize_classification(item) for item in nested if isinstance(item, dict)]
+            return [_normalize_classification(data)]
     return None
 
 
@@ -188,6 +252,10 @@ def _passes_hard_filter(
     # Need at least one ticker OR macro/geopolitics with high impact
     macro_cats = {"macro", "geopolitics", "regulatory"}
     if not tickers and category not in macro_cats:
+        if headline and score >= 0.8:
+            text = f"{headline.title} {headline.summary}"
+            if TRADE_SIGNALS.search(text):
+                return True
         return False
 
     return True
@@ -211,6 +279,7 @@ def _apply_classification(
     search_topics: list[str] | None = None,
 ) -> None:
     """Run hard filter and mark headline filtered or discarded."""
+    classification = _enrich_classification_tickers(classification, headline)
     classification = enrich_ai_classification(classification, headline)
 
     if not _passes_hard_filter(classification, watchlist, headline, search_topics):
@@ -254,6 +323,7 @@ def filter_headlines(headlines: list[Headline]) -> tuple[list[tuple[Headline, di
     cache_hits = 0
     need_llm: list[Headline] = []
     llm_failures = 0
+    parse_failures = 0
     for h in candidates:
         cached = get_cached_classification(h.title, h.source)
         if cached is not None:
@@ -262,19 +332,22 @@ def filter_headlines(headlines: list[Headline]) -> tuple[list[tuple[Headline, di
         else:
             need_llm.append(h)
 
-    batch_size = 5
-    for batch_start in range(0, len(need_llm), batch_size):
-        batch = need_llm[batch_start : batch_start + batch_size]
+    def _classify_batch(batch: list[Headline]) -> int:
+        nonlocal llm_failures, parse_failures
+        if not batch:
+            return 0
+        before = len(results)
         prompt = _build_batch_prompt(batch, watchlist, search_topics)
         raw = _call_claude(FILTER_SYSTEM_PROMPT, prompt, FILTER_MODEL)
         if not raw:
             llm_failures += 1
-            continue
+            return 0
 
         parsed = _parse_json_array(raw)
         if not parsed:
-            logger.warning("Skipping batch due to unparseable filter response")
-            continue
+            parse_failures += 1
+            logger.warning("Unparseable filter response (batch=%d): %s", len(batch), raw[:200])
+            return 0
 
         for i, h in enumerate(batch):
             if i >= len(parsed):
@@ -282,6 +355,16 @@ def filter_headlines(headlines: list[Headline]) -> tuple[list[tuple[Headline, di
             classification: dict[str, Any] = parsed[i]
             cache_classification(h.title, h.source, classification)
             _apply_classification(h, classification, watchlist, results, search_topics)
+        return len(results) - before
+
+    batch_size = 3
+    for batch_start in range(0, len(need_llm), batch_size):
+        batch = need_llm[batch_start : batch_start + batch_size]
+        if _classify_batch(batch) > 0:
+            continue
+        if len(batch) > 1:
+            for headline in batch:
+                _classify_batch([headline])
 
     prune_classification_cache()
 
@@ -289,7 +372,7 @@ def filter_headlines(headlines: list[Headline]) -> tuple[list[tuple[Headline, di
     results.sort(key=lambda x: composite_score(x[0], x[1]), reverse=True)
 
     filter_error: str | None = None
-    if need_llm and not results:
+    if not results and candidates:
         last_err = get_last_llm_error()
         provider = resolve_provider(FILTER_PROVIDER)
         if llm_failures > 0:
@@ -298,8 +381,15 @@ def filter_headlines(headlines: list[Headline]) -> tuple[list[tuple[Headline, di
                 if provider == "none"
                 else f"{provider} filter request failed — check API balance and Railway logs"
             )
+        elif parse_failures > 0:
+            filter_error = "Filter LLM returned invalid JSON — try fetch again"
+        elif need_llm:
+            filter_error = (
+                f"0 of {len(candidates)} headlines passed filter — "
+                "add watchlist tickers or search topics, or try again later"
+            )
         else:
-            filter_error = "Filter LLM returned no usable classifications — try fetch again"
+            filter_error = "Cached classifications rejected all headlines — try fetch again"
         logger.error("Filter failed: %s", filter_error)
 
     logger.info(
