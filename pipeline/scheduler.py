@@ -89,6 +89,8 @@ def get_pipeline_status(*, lightweight: bool = False) -> dict:
         "last_filter_kept": get_setting("pipeline_last_filter_kept", 0),
         "last_expired": get_setting("pipeline_last_expired", 0),
         "last_error": get_setting("pipeline_last_error"),
+        "last_skipped_stale": get_setting("pipeline_last_skipped_stale", 0),
+        "last_skipped_dup": get_setting("pipeline_last_skipped_dup", 0),
         "last_ingest_by_source": ingest_by_source,
         "schedule": sched,
     }
@@ -170,6 +172,8 @@ def _save_cycle_stats(
     expired: int = 0,
     error: str | None = None,
     ingest_by_source: dict | None = None,
+    skipped_stale: int = 0,
+    skipped_dup: int = 0,
 ) -> None:
     set_setting("pipeline_last_run_at", datetime.utcnow().isoformat())
     set_setting("pipeline_last_ingest_count", ingest_count)
@@ -177,6 +181,8 @@ def _save_cycle_stats(
     set_setting("pipeline_last_filter_kept", filter_kept)
     set_setting("pipeline_last_expired", expired)
     set_setting("pipeline_last_error", error)
+    set_setting("pipeline_last_skipped_stale", skipped_stale)
+    set_setting("pipeline_last_skipped_dup", skipped_dup)
     if ingest_by_source is not None:
         set_setting("pipeline_last_ingest_by_source", ingest_by_source)
 
@@ -223,6 +229,8 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
         _pipeline_running = True
         _pipeline_started_at = datetime.utcnow()
         ingest_count = 0
+        skipped_stale = 0
+        skipped_dup = 0
         expired = 0
         budget = DraftBudget()
         cycle_start = datetime.utcnow()
@@ -251,7 +259,7 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                 clear_sec_feed_cache()
                 expired = expire_stale_drafts()
                 discarded = discard_stale_headlines()
-                ingest_count, ingest_by_source = ingest_headlines()
+                ingest_count, ingest_by_source, skipped_stale, skipped_dup = ingest_headlines()
 
                 earnings_ingested, _ = process_earnings(budget)
                 if earnings_ingested:
@@ -276,19 +284,24 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                 headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
                 headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
                 filter_kept = 0
+                filter_error: str | None = None
                 if headlines and budget.remaining > 0:
-                    filtered = filter_headlines(headlines)
+                    filtered, filter_error = filter_headlines(headlines)
                     filter_kept = len(filtered)
                     filtered = select_diverse_for_drafting(filtered, budget.remaining * 2)
                     if filtered:
                         draft_posts(filtered, budget)
 
+                cycle_error = filter_error
                 _save_cycle_stats(
                     ingest_count=ingest_count,
                     drafts_created=budget.created,
                     filter_kept=filter_kept,
                     expired=expired,
+                    error=cycle_error,
                     ingest_by_source=ingest_by_source,
+                    skipped_stale=skipped_stale,
+                    skipped_dup=skipped_dup,
                 )
                 set_setting("pipeline_last_schedule_mode", decision.mode)
                 set_setting("pipeline_last_schedule_skip", None)
@@ -320,6 +333,8 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                 drafts_created=budget.created,
                 expired=expired,
                 error=str(e),
+                skipped_stale=skipped_stale,
+                skipped_dup=skipped_dup,
             )
             check_pipeline_health(budget.created, str(e))
         finally:

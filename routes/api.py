@@ -503,7 +503,7 @@ def finnhub_test(request: Request):
 async def pipeline_run(request: Request):
     require_auth(request)
     check_action_rate_limit(request, "pipeline", max_calls=10, window_seconds=60)
-    status = get_pipeline_status()
+    status = get_pipeline_status(lightweight=True)
     if status["running"]:
         raise HTTPException(status_code=409, detail="Pipeline is already running")
     return trigger_pipeline_cycle(force=True)

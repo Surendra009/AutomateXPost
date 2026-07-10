@@ -23,7 +23,7 @@ from database import get_session, get_setting
 from logging_config import setup_logging
 from models import Headline
 from pipeline.finnhub_api import finnhub_get, parse_finnhub_timestamp
-from pipeline.freshness import is_fresh, news_cutoff
+from pipeline.freshness import get_max_news_age_hours, is_fresh, news_cutoff
 from pipeline.dedup_mode import dedup_at_ingest
 from pipeline.ingest_dedup import load_ingest_dedup_index
 from pipeline.story_key import title_fingerprint
@@ -165,8 +165,11 @@ def _finnhub_items(data: list[dict], source: str, limit: int = 30) -> list[dict]
     return items
 
 
-def ingest_headlines() -> tuple[int, dict[str, int]]:
-    """Fetch all feeds and insert new headlines. Returns (new_count, per_source_counts)."""
+def ingest_headlines() -> tuple[int, dict[str, int], int, int]:
+    """Fetch all feeds and insert new headlines.
+
+    Returns (new_count, per_source_counts, skipped_stale, skipped_dup).
+    """
     watchlist = get_setting("watchlist", [])
     source_batches: list[tuple[str, list[dict]]] = []
 
@@ -193,6 +196,8 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
     per_source: dict[str, int] = {}
     skipped_stale: dict[str, int] = {}
     skipped_dup: dict[str, int] = {}
+    total_stale = 0
+    total_dup = 0
     new_count = 0
     dedup_index = load_ingest_dedup_index()
 
@@ -232,18 +237,21 @@ def ingest_headlines() -> tuple[int, dict[str, int]]:
                 new_count += 1
                 added += 1
             per_source[source] = added
+            total_stale += skipped
+            total_dup += dupes
             if skipped:
                 skipped_stale[source] = skipped
             if dupes:
                 skipped_dup[source] = dupes
         session.commit()
 
+    max_age = get_max_news_age_hours()
     if skipped_stale:
-        logger.info("Skipped stale headlines (>%dh): %s", MAX_NEWS_AGE_HOURS, str(skipped_stale))
+        logger.info("Skipped stale headlines (>%dh): %s", max_age, str(skipped_stale))
     if skipped_dup:
         logger.info("Skipped cross-source duplicates: %s", str(skipped_dup))
     logger.info("Ingested %d new headlines: %s", new_count, str(per_source))
-    return new_count, per_source
+    return new_count, per_source, total_stale, total_dup
 
 
 def get_unfiltered_headlines(limit: int = 50) -> list[Headline]:

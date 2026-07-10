@@ -923,13 +923,25 @@ document.getElementById('fetch-now').addEventListener('click', async () => {
     const ingested = res.last_ingest_count || 0;
     const drafts = res.last_drafts_created || 0;
     const filtered = res.last_filter_kept || 0;
+    const skippedStale = res.last_skipped_stale || 0;
+    const skippedDup = res.last_skipped_dup || 0;
     const parts = [];
     if (ingested) parts.push(`${ingested} new headline${ingested === 1 ? '' : 's'}`);
     if (filtered) parts.push(`${filtered} passed filter`);
     if (drafts) parts.push(`${drafts} new draft${drafts === 1 ? '' : 's'}`);
     if (res.last_expired) parts.push(`${res.last_expired} expired`);
     if (!ingested && !drafts) {
-      showToast('No new stories — add tickers to watchlist or try again later.', 'success');
+      if (res.last_error) {
+        showToast(res.last_error, 'error');
+      } else if (skippedDup && !skippedStale) {
+        showToast('No new stories — already fetched recently. Try again in an hour.', 'success');
+      } else if (skippedStale && !ingested) {
+        showToast('No fresh headlines in the last 8 hours — try again later or add search topics.', 'success');
+      } else if (filtered === 0 && (skippedDup || skippedStale)) {
+        showToast('Headlines found but none passed filter — add watchlist tickers for better matches.', 'success');
+      } else {
+        showToast('No new stories — add watchlist tickers or search topics, then fetch again.', 'success');
+      }
     } else {
       showToast(parts.length ? parts.join(', ') : 'Fetch complete', 'success');
     }
@@ -1178,7 +1190,7 @@ function showToast(msg, type = '') {
 // ── Service Worker ───────────────────────────────────────
 
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js?v=59').catch(() => {});
+  navigator.serviceWorker.register('/sw.js?v=60').catch(() => {});
 }
 
 // ── Init ─────────────────────────────────────────────────

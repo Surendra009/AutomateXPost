@@ -226,10 +226,10 @@ def _apply_classification(
             session.commit()
 
 
-def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
-    """Filter headlines via pre-check + cache + Claude Haiku. Returns (headline, classification) pairs."""
+def filter_headlines(headlines: list[Headline]) -> tuple[list[tuple[Headline, dict]], str | None]:
+    """Filter headlines via pre-check + cache + LLM. Returns (kept pairs, error message)."""
     if not headlines:
-        return []
+        return [], None
 
     watchlist = get_setting("watchlist", [])
     search_topics = get_setting("search_topics", [])
@@ -249,10 +249,11 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
 
     if not candidates:
         logger.info("All headlines removed by pre-filter")
-        return []
+        return [], None
 
     cache_hits = 0
     need_llm: list[Headline] = []
+    llm_failures = 0
     for h in candidates:
         cached = get_cached_classification(h.title, h.source)
         if cached is not None:
@@ -266,6 +267,7 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
         prompt = _build_batch_prompt(batch, watchlist, search_topics)
         raw = _call_claude(FILTER_SYSTEM_PROMPT, prompt, FILTER_MODEL)
         if not raw:
+            llm_failures += 1
             continue
 
         parsed = _parse_json_array(raw)
@@ -285,6 +287,11 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
     # Sort by composite score (tech/stock/AI sources boosted)
     results.sort(key=lambda x: composite_score(x[0], x[1]), reverse=True)
 
+    filter_error: str | None = None
+    if need_llm and not results and llm_failures > 0:
+        filter_error = "Filter LLM unavailable — check DEEPSEEK_API_KEY on Railway"
+        logger.error(filter_error)
+
     logger.info(
         "Filter kept %d/%d headlines (pre-filter %d, cache hits %d, Haiku %d)",
         len(results),
@@ -293,4 +300,4 @@ def filter_headlines(headlines: list[Headline]) -> list[tuple[Headline, dict]]:
         cache_hits,
         len(need_llm),
     )
-    return results
+    return results, filter_error

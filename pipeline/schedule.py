@@ -102,6 +102,7 @@ def evaluate_schedule(*, force: bool = False, now: datetime | None = None) -> Sc
             run=True,
             mode="manual",
             reason="manual trigger",
+            max_news_age_hours=OVERNIGHT_CATCHUP_MAX_AGE_HOURS,
         )
 
     now = now or local_now()
