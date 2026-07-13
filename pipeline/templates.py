@@ -18,6 +18,7 @@ from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.earnings_parse import (
     build_earnings_lines,
     extract_earnings_facts,
+    format_earnings_draft,
 )
 
 # ── Earnings patterns ─────────────────────────────────────────────────────
@@ -178,7 +179,7 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
         finnhub_facts=facts,
         finnhub_summary=text,
         headline_url=headline.url or "",
-        skip_web_search=True,
+        skip_web_search=False,
     )
     if enrichment.news_context or enrichment.article_text:
         facts = enrichment.facts or extract_earnings_facts(
@@ -190,13 +191,23 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
         facts,
         source_text=enrichment.news_context or text,
         article_text=enrichment.article_text,
+        html=enrichment.press_html,
     )
     if not lines:
         return None
 
-    line1, line2, line3 = lines
-    ticker_line = " ".join(f"${t}" for t in tickers)
-    body = f"{line1}\n{line2}\n{line3}\n\n{ticker_line}".strip()
+    line1, line2, line3, highlights = lines
+    if enrichment.highlights:
+        highlights = enrichment.highlights
+    body = format_earnings_draft(
+        line1,
+        line2,
+        line3,
+        highlights=highlights,
+        ticker=tickers[0] if len(tickers) == 1 else None,
+    )
+    if len(tickers) > 1:
+        body = f"{body}\n\n" + " ".join(f"${t}" for t in tickers)
     impact = "high" if verb in ("beat", "missed") else "med"
 
     return TemplateDraft(

@@ -14,7 +14,7 @@ from pipeline.finnhub_api import finnhub_get, get_finnhub_key, parse_finnhub_tim
 from pipeline.freshness import is_fresh
 from pipeline.noise import is_title_noise
 from pipeline.structured_common import content_hash, save_structured_draft
-from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts
+from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts, format_earnings_draft
 from pipeline.enrich import fetch_article_text
 from pipeline.watchlist_scope import normalized_watchlist
 
@@ -103,12 +103,14 @@ def _build_draft(
         )
         if not lines:
             return None
-        line1, line2, line3 = lines
+        line1, line2, line3, highlights = lines
         impact = "high" if verb in ("beat", "missed") else "med"
         fmt = "BREAKING"
         confidence = 0.9
         category = "earnings"
-        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
+        draft = format_earnings_draft(
+            line1, line2, line3, highlights=highlights, ticker=symbol
+        )
         return draft, category, impact, fmt, confidence, line1
     elif GUIDANCE.search(text):
         line1 = f"{symbol} updated guidance"

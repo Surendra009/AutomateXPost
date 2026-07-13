@@ -1,4 +1,31 @@
-/* PostPilot PWA — vanilla JS, no build step */
+const HIGHLIGHTS_MARKER = '---\nHighlights:';
+
+function splitDraftText(text) {
+  const raw = text || '';
+  const idx = raw.indexOf(HIGHLIGHTS_MARKER);
+  if (idx === -1) {
+    return { post: raw.trim(), highlights: [] };
+  }
+  const post = raw.slice(0, idx).trim();
+  const bullets = raw
+    .slice(idx + HIGHLIGHTS_MARKER.length)
+    .split('\n')
+    .map((line) => line.replace(/^[\s•\-*]+/, '').trim())
+    .filter(Boolean);
+  return { post, highlights: bullets };
+}
+
+function renderDraftHighlights(highlights) {
+  if (!highlights.length) return '';
+  const items = highlights
+    .map((item) => `<li>${esc(item)}</li>`)
+    .join('');
+  return `
+    <div class="draft-highlights">
+      <div class="draft-highlights-title">Press release highlights</div>
+      <ul class="draft-highlights-list">${items}</ul>
+    </div>`;
+}
 
 const API = '/api';
 let currentTab = 'stock';
@@ -424,6 +451,8 @@ function renderDraftCard(d) {
   const isEditing = editingDraftId === d.id;
   const fmt = (d.format || 'CONTEXT').toLowerCase();
   const textClass = fmt === 'breaking' ? 'is-breaking' : fmt === 'summary' ? 'is-summary' : '';
+  const split = splitDraftText(d.text);
+  const tweetText = split.post;
   const source = d.headline
     ? `<a href="${esc(d.headline.url)}" target="_blank" rel="noopener">${esc(d.headline.source)}</a>`
     : 'Unknown source';
@@ -440,7 +469,7 @@ function renderDraftCard(d) {
     body = `
       <div class="post-foot">
         <textarea class="edit-box" id="edit-${d.id}" maxlength="500">${esc(d.text)}</textarea>
-        <div class="char-count" id="counter-${d.id}">${d.text.length}/280</div>
+        <div class="char-count" id="counter-${d.id}">${tweetText.length}/280</div>
         <div class="post-actions">
           <button class="btn btn-approve btn-block" data-action="approve-edit" data-id="${d.id}">Approve edit</button>
           <button class="btn btn-secondary btn-block" data-action="cancel-edit" data-id="${d.id}">Cancel</button>
@@ -449,7 +478,8 @@ function renderDraftCard(d) {
   } else {
     body = `
       <div class="post-body">
-        <div class="post-text ${textClass}">${esc(d.text)}</div>
+        <div class="post-text ${textClass}">${esc(tweetText)}</div>
+        ${renderDraftHighlights(split.highlights)}
       </div>
       <div class="post-foot">
         <div class="post-tags">${tags}</div>

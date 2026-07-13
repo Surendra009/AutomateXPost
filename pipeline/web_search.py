@@ -66,8 +66,12 @@ def search_news(
 
     limit = limit if limit is not None else MAX_WEB_RESULTS_PER_QUERY
     encoded = urllib.parse.quote(query)
-    # when:1d biases results to the past day when supported by Google News
-    when = "1d" if (recency or "1d") in ("1d", "qdr:d", "pd", "day") else ""
+    when = ""
+    rec = (recency or "1d").lower()
+    if rec in ("1d", "qdr:d", "pd", "day"):
+        when = "1d"
+    elif rec in ("7d", "week", "qdr:w"):
+        when = "7d"
     when_param = f"+when:{when}" if when else ""
     feed_url = (
         f"https://news.google.com/rss/search?q={encoded}{when_param}"

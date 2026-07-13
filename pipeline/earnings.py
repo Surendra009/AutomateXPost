@@ -23,6 +23,7 @@ from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.earnings_parse import (
     EarningsFacts,
     build_earnings_lines,
+    format_earnings_draft,
 )
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
@@ -206,11 +207,16 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
         facts,
         source_text=enrichment.news_context or summary,
         article_text=enrichment.article_text,
-        allow_llm=False,
+        allow_llm=True,
+        html=enrichment.press_html,
     )
     if lines:
-        line1, line2, line3 = lines
-        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
+        line1, line2, line3, highlights = lines
+        if enrichment.highlights:
+            highlights = enrichment.highlights
+        draft = format_earnings_draft(
+            line1, line2, line3, highlights=highlights, ticker=symbol
+        )
     else:
         line1 = f"{symbol} {verb} {q_label}EPS {eps_actual_s} vs {eps_est_s} est"
         line2 = (

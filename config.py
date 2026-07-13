@@ -10,7 +10,7 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-APP_BUILD = os.getenv("APP_BUILD", "68")
+APP_BUILD = os.getenv("APP_BUILD", "70")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
@@ -108,7 +108,11 @@ MAX_WEB_TICKERS_PER_CYCLE = int(os.getenv("MAX_WEB_TICKERS_PER_CYCLE", "8"))
 MAX_WEB_TOPICS_PER_CYCLE = int(os.getenv("MAX_WEB_TOPICS_PER_CYCLE", "5"))
 MAX_EARNINGS_WEB_QUERIES = int(os.getenv("MAX_EARNINGS_WEB_QUERIES", "2"))
 MAX_EARNINGS_WEB_ARTICLES = int(os.getenv("MAX_EARNINGS_WEB_ARTICLES", "2"))
-EARNINGS_ENRICH_BUDGET_SECONDS = int(os.getenv("EARNINGS_ENRICH_BUDGET_SECONDS", "12"))
+EARNINGS_ENRICH_BUDGET_SECONDS = int(os.getenv("EARNINGS_ENRICH_BUDGET_SECONDS", "18"))
+MAX_EARNINGS_HIGHLIGHTS = int(os.getenv("MAX_EARNINGS_HIGHLIGHTS", "10"))
+EARNINGS_PRESS_DAYS_BACK = int(os.getenv("EARNINGS_PRESS_DAYS_BACK", "7"))
+_LLM_EARNINGS_BULLET_BATCHES_PER_CYCLE = int(os.getenv("LLM_EARNINGS_BULLET_BATCHES_PER_CYCLE", "4"))
+LLM_EARNINGS_BULLET_BATCHES_PER_CYCLE = _LLM_EARNINGS_BULLET_BATCHES_PER_CYCLE
 FINNHUB_GENERAL_SUPPLEMENT = os.getenv("FINNHUB_GENERAL_SUPPLEMENT", "false").lower() in (
     "1",
     "true",

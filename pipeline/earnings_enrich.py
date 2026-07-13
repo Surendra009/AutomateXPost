@@ -17,9 +17,11 @@ from pipeline.earnings_parse import (
     EarningsFacts,
     _EARNINGS_NEWS,
     extract_earnings_facts,
+    extract_earnings_highlights,
     fetch_earnings_article_text,
     fetch_earnings_news_context,
 )
+from pipeline.earnings_press import fetch_earnings_press_release, fetch_press_html
 from pipeline.enrich import fetch_article_text
 from pipeline.web_search import search_news
 
@@ -54,6 +56,9 @@ class EarningsEnrichment:
     facts: EarningsFacts | None = None
     sources: list[str] = field(default_factory=list)
     cross_check: list[str] = field(default_factory=list)
+    highlights: list[str] = field(default_factory=list)
+    press_url: str = ""
+    press_html: str = ""
 
 
 def _cache_key(symbol: str, quarter: int | None, year: int | None) -> str:
@@ -174,6 +179,21 @@ def enrich_earnings_context(
     if finnhub_summary:
         chunks.append(finnhub_summary)
 
+    press_text = ""
+    press_url = ""
+    press_title = ""
+    press_html = ""
+    if _time_left() and not skip_web_search:
+        press_text, press_url, press_title = fetch_earnings_press_release(
+            symbol, quarter=quarter, year=year
+        )
+        if press_text:
+            chunks.insert(0, f"{press_title} {press_text[:1200]}".strip())
+            articles.insert(0, press_text)
+            if press_url:
+                sources.append(press_url)
+                press_html = fetch_press_html(press_url)
+
     if _time_left():
         fh_news = fetch_earnings_news_context(symbol)
         if fh_news:
@@ -238,7 +258,14 @@ def enrich_earnings_context(
             fetched += 1
 
     news_context = " ".join(chunks)[:5000]
-    article_text = "\n\n---\n\n".join(articles)[:6000]
+    article_text = "\n\n---\n\n".join(articles)[:8000]
+
+    highlights = extract_earnings_highlights(
+        f"{news_context} {article_text}",
+        ticker=symbol,
+        allow_llm=not skip_web_search,
+        html=press_html,
+    )
 
     cross_check: list[str] = []
     merged = finnhub_facts
@@ -255,6 +282,8 @@ def enrich_earnings_context(
             "symbol": symbol,
             "web_headlines": len(web_items),
             "articles": len(sources),
+            "highlights": len(highlights),
+            "press_url": press_url[:120] if press_url else "",
             "verified": verified,
             "notes": cross_check[:2],
         }
@@ -266,6 +295,9 @@ def enrich_earnings_context(
         facts=merged,
         sources=sources,
         cross_check=cross_check,
+        highlights=highlights,
+        press_url=press_url,
+        press_html=press_html,
     )
     _enrich_cache[key] = result
     return result
