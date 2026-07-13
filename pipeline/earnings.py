@@ -138,7 +138,7 @@ def _build_preview(event: dict[str, Any]) -> tuple[str, str, str] | None:
 
     line1 = f"{symbol} reports {hour_tag} today" if hour_tag else f"{symbol} reports {timing} today"
     line2 = est_line
-    line3 = "Watch segment commentary, margins, and full-year guide on the call"
+    line3 = f"Consensus {est_line}" if est_line else f"{symbol} earnings today"
     draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
     return title, summary, draft
 
@@ -224,7 +224,13 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
             if rev_actual_s and rev_est_s
             else "Segment detail on the call"
         )
-        line3 = "Guidance and margins set the next move"
+        line3 = (
+            f"Revenue {rev_actual_s} vs {rev_est_s} est"
+            if rev_actual_s and rev_est_s
+            else f"EPS {eps_actual_s} vs {eps_est_s} est"
+            if eps_actual_s and eps_est_s
+            else f"{symbol} {verb} {q_label}earnings"
+        )
         draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
 
     impact = "high" if overall in ("beat", "miss") else "med"

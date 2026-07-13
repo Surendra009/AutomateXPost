@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from config import ANTHROPIC_API_KEY, FILTER_MODEL
 from logging_config import setup_logging
+from pipeline.draft_quality import generic_draft_reason
 
 logger = setup_logging()
 
@@ -369,10 +370,10 @@ def llm_earnings_highlights(source_text: str, ticker: str, max_bullets: int = 10
     prompt = (
         f"Ticker: {ticker}\n"
         f"Press release excerpt:\n{source_text[:5000]}\n\n"
-        f"Return a JSON array of up to {max_bullets} short bullet strings "
-        "(max 100 chars each) with segment growth, margins, guidance, demand, "
-        "product wins, and management outlook. "
-        "Do NOT repeat the headline EPS/revenue beat/miss line. "
+        f        "Return a JSON array of up to {max_bullets} short bullet strings "
+        "(max 100 chars each) with segment growth %, margins, guidance ranges, "
+        "product metrics, and demand data. "
+        "No rhetorical questions, no 'investors worry', no filler. "
         "Plain strings only, no numbering."
     )
     system = "You extract earnings press-release highlights as a JSON string array."
@@ -624,8 +625,8 @@ def _revenue_surprise_pct(actual: str, estimate: str) -> float | None:
         return None
 
 
-def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str:
-    """Company-specific line 3 — derived from numbers, not a shared template."""
+def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str | None:
+    """Company-specific line 3 — numeric only, no generic filler."""
     eps_surp = None
     if facts.eps_actual and facts.eps_estimate:
         eps_surp = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
@@ -646,27 +647,29 @@ def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str:
                     f"Revenue beat {rev_surp:.0f}% too — broad-based quarter, not a skinny top-line miss"
                 )
             if rev_surp < -1:
-                return "EPS beat despite revenue missing — margin story needs to hold on the call"
+                return f"EPS beat but revenue missed by {abs(rev_surp):.0f}% — margin expansion offset the top-line gap"
         if eps_surp is not None and eps_surp >= 80:
-            return f"Street was {eps_surp:.0f}% too low on EPS — models need a full reset after the call"
+            return f"Street underestimated EPS by {eps_surp:.0f}% — models need repricing"
         if eps_surp is not None and eps_surp >= 20:
-            return f"{eps_surp:.0f}% EPS surprise — sets a high bar for forward guidance tonight"
+            return f"EPS cleared consensus by {eps_surp:.0f}%"
         if rev_surp is not None and rev_surp >= 8:
             return f"Revenue beat {rev_surp:.0f}% vs est — top-line momentum backs the EPS upside"
         if facts.yoy_pct:
-            return f"Revenue up {facts.yoy_pct}% YoY — growth vs guide is the key read from here"
-        return "Segment mix and full-year outlook on the call decide if the beat sticks"
+            return f"Revenue up {facts.yoy_pct}% YoY"
+        return None
 
     if verb == "missed":
         if eps_surp is not None and rev_surp is not None and rev_surp < -2:
             return f"Revenue missed {abs(rev_surp):.0f}% too — demand softness may be the bigger story"
         if eps_surp is not None and eps_surp <= -15:
-            return f"EPS {abs(eps_surp):.0f}% below street — watch for guide cuts and margin commentary"
-        return "Miss opens downside risk — guidance and segment detail on the call matter most"
+            return f"EPS {abs(eps_surp):.0f}% below consensus"
+        if rev_surp is not None and rev_surp < 0:
+            return f"Revenue missed by {abs(rev_surp):.0f}% vs est"
+        return None
 
     if facts.yoy_pct:
-        return f"Revenue growth ran +{facts.yoy_pct}% YoY — compare that pace to management's outlook"
-    return "Print is in — segment breakdown and guide frame the trade from here"
+        return f"Revenue growth +{facts.yoy_pct}% YoY"
+    return None
 
 
 def build_earnings_lines(
@@ -714,7 +717,6 @@ def build_earnings_lines(
         allow_llm=allow_llm,
         html=html,
     )
-    highlight = highlights[0] if highlights else None
 
     if facts.revenue_actual and facts.revenue_estimate and "revenue" not in line1.lower():
         line2 = f"Revenue {facts.revenue_actual} vs {facts.revenue_estimate} est"
@@ -724,15 +726,37 @@ def build_earnings_lines(
         surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
         if surprise is not None:
             word = "cleared" if surprise >= 0 else "missed"
-            line2 = f"EPS {word} the street by {abs(surprise):.0f}%"
+            line2 = f"EPS {word} consensus by {abs(surprise):.0f}%"
         else:
-            line2 = "Headline numbers vs the street"
+            line2 = f"EPS {facts.eps_actual} vs {facts.eps_estimate} est"
+    elif facts.revenue_actual:
+        line2 = f"Revenue {facts.revenue_actual}"
     else:
-        line2 = "Full segment breakdown on the call"
+        line2 = f"{ticker} reported {q}results"
 
-    if highlight and highlight.lower() not in line2.lower():
-        line3 = highlight
-    else:
-        line3 = build_earnings_insight(ticker, verb, facts)
+    insight = build_earnings_insight(ticker, verb, facts)
+    line3 = None
+    for candidate in (
+        highlights[0] if highlights else None,
+        highlights[1] if len(highlights) > 1 else None,
+        insight,
+    ):
+        if not candidate:
+            continue
+        low = candidate.lower()
+        if low in line1.lower() or low in line2.lower():
+            continue
+        if generic_draft_reason(candidate):
+            continue
+        line3 = candidate
+        break
+
+    if not line3:
+        if facts.revenue_actual and "revenue" not in line1.lower() and "revenue" not in line2.lower():
+            line3 = f"Revenue {facts.revenue_actual}"
+        elif facts.eps_actual and "eps" not in line1.lower():
+            line3 = f"EPS {facts.eps_actual}"
+        else:
+            return None
 
     return line1, line2, line3, highlights

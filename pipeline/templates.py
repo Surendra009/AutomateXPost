@@ -15,6 +15,7 @@ from pipeline.ai_news import (
 )
 from pipeline.earnings_dedup import earnings_ticker_blocked
 from pipeline.earnings_enrich import enrich_earnings_context
+from pipeline.draft_quality import generic_draft_reason
 from pipeline.earnings_parse import (
     build_earnings_lines,
     extract_earnings_facts,
@@ -249,7 +250,7 @@ def try_macro_template(headline: Headline, classification: dict) -> TemplateDraf
         else:
             line1 = _shorten(headline.title, 72)
 
-    line2 = MACRO_TAKEAWAY.get(label, "Macro data moves rates and risk assets")
+    line2 = MACRO_TAKEAWAY.get(label, _fact_line_from_text(headline.title, headline.summary, f"{label} data vs expectations"))
     body = f"{line1}\n{line2}\n\n$SPY"
     return TemplateDraft(
         text=body,
@@ -268,26 +269,38 @@ def _shorten(text: str, max_len: int) -> str:
     return text[: max_len - 1].rsplit(" ", 1)[0] + "…"
 
 
+def _fact_line_from_text(title: str, summary: str, fallback: str) -> str:
+    text = f"{title} {summary}"
+    pct = re.search(r"(\d+\.?\d*)%", text)
+    money = re.search(r"\$[\d,.]+[BMK]?", text)
+    if pct and money:
+        return f"{money.group(0)} print ({pct.group(1)}% move) in the release"
+    if money:
+        return f"Deal/value cited at {money.group(0)}"
+    if pct:
+        return f"Key metric moved {pct.group(1)}%"
+    line = _shorten(summary or title, 95)
+    return line if len(line) > 20 and not generic_draft_reason(line) else fallback
+
+
 def _ai_takeaway(title: str, summary: str) -> str:
-    blob = f"{title} {summary}".lower()
-    if re.search(r"\bapi\b|sdk|developers?", blob):
-        return "Gives builders a new hook into the stack"
-    if re.search(r"\b(model|gpt|claude|gemini|llama)\b", blob):
-        return "Raises the bar in the model race"
-    if re.search(r"\bmobile|app|ios|android\b", blob):
-        return "Puts AI in more users' hands"
-    if re.search(r"\bagent|copilot|automation\b", blob):
-        return "Pushes agents closer to daily workflows"
-    return "Another step in the AI product war"
+    blob = f"{title} {summary}"
+    named = re.search(
+        r"\b(GPT-\d|Claude|Gemini|Llama|Copilot|API|SDK|iOS|Android)\b[^.]{0,60}",
+        blob,
+        re.I,
+    )
+    if named:
+        return _shorten(named.group(0).strip(), 95)
+    return _fact_line_from_text(title, summary, _shorten(summary or title, 95))
 
 
 def _geopolitics_takeaway(title: str, summary: str) -> str:
-    blob = f"{title} {summary}".lower()
-    if re.search(r"\b(iran|tanker|hormuz|strike|missile|attacks)\b", blob):
-        return "Oil supply risk rises — energy names reprice quickly"
-    if re.search(r"\b(oil|crude|opec|gas)\b", blob):
-        return "Crude volatility spreads to majors and oil ETFs"
-    return "Geopolitical risk shifts defensive and energy trades"
+    blob = f"{title} {summary}"
+    oil = re.search(r"\b(\d+\.?\d*)%?\s*(?:jump|rise|surge|fall|drop)?[^.]{0,30}\b(oil|crude|brent|wti)\b", blob, re.I)
+    if oil:
+        return _shorten(oil.group(0).strip(), 95)
+    return _fact_line_from_text(title, summary, _shorten(summary or title, 95))
 
 
 def try_geopolitics_template(headline: Headline, classification: dict) -> TemplateDraft | None:
@@ -306,7 +319,7 @@ def try_geopolitics_template(headline: Headline, classification: dict) -> Templa
 
     line1 = _shorten(headline.title, 95)
     line2 = _geopolitics_takeaway(headline.title, headline.summary)
-    line3 = "Watch oil majors and energy ETFs for follow-through"
+    line3 = _fact_line_from_text(headline.title, headline.summary, "Energy and defense names tied to the headline")
     body = f"{line1}\n{line2}\n{line3}\n\n" + " ".join(f"${t}" for t in tickers)
 
     return TemplateDraft(
