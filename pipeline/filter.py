@@ -14,6 +14,7 @@ from pipeline.ai_news import enrich_ai_classification, is_ai_source, is_material
 from pipeline.classify_cache import cache_classification, get_cached_classification, prune_classification_cache
 from pipeline.freshness import is_fresh
 from pipeline.earnings_dedup import extract_ticker_from_text
+from pipeline.earnings_freshness import earnings_period_is_stale
 from pipeline.llm_providers import call_llm, get_last_llm_error, resolve_provider
 from pipeline.noise import TRADE_SIGNALS, is_obvious_noise
 from pipeline.prioritize import composite_score
@@ -216,6 +217,8 @@ def _passes_hard_filter(
         return False
 
     if category == "earnings" and impact in ("high", "med"):
+        if headline and earnings_period_is_stale(f"{headline.title} {headline.summary}"):
+            return False
         tickers = [t.upper() for t in classification.get("tickers", [])]
         if tickers or score >= MIN_RELEVANCE_SCORE:
             return True

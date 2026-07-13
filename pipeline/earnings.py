@@ -18,7 +18,7 @@ from config import (
 from pipeline.dedup import was_recently_drafted
 from pipeline.draft_budget import DraftBudget
 from pipeline.earnings_dedup import earnings_ticker_blocked, expire_earnings_previews_for_ticker
-from pipeline.earnings_freshness import estimate_earnings_release_utc, is_earnings_fresh
+from pipeline.earnings_freshness import estimate_earnings_release_utc, is_earnings_fresh, earnings_period_is_stale, is_current_reporting_period
 from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.earnings_parse import (
     EarningsFacts,
@@ -310,8 +310,10 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
             continue
 
         date_str = event.get("date") or today.isoformat()
-        quarter = int(event.get("quarter") or 0)
-        year = int(event.get("year") or 0)
+        quarter_raw = event.get("quarter")
+        year_raw = event.get("year")
+        quarter = int(quarter_raw) if quarter_raw not in (None, "", 0) else None
+        year = int(year_raw) if year_raw not in (None, "", 0) else None
 
         try:
             event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -325,11 +327,21 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
 
         if _has_actual(event):
             kind = "result"
-            chash = _event_hash(symbol, date_str, quarter, year, kind)
+            chash = _event_hash(symbol, date_str, quarter or 0, year or 0, kind)
             if _headline_exists(chash):
                 continue
             if earnings_ticker_blocked(symbol, results_only=True):
                 logger.debug("Skipping duplicate earnings result for %s", symbol)
+                continue
+
+            if not is_current_reporting_period(quarter, year, as_of=event_date):
+                logger.debug(
+                    "Skipping prior-quarter earnings result %s Q%s %s (event %s)",
+                    symbol,
+                    quarter,
+                    year,
+                    date_str,
+                )
                 continue
 
             release_at = estimate_earnings_release_utc(
@@ -348,6 +360,10 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
             if not built:
                 continue
             title, summary, draft_text, impact = built
+
+            if earnings_period_is_stale(f"{title} {summary}", quarter=quarter, year=year, as_of=event_date):
+                logger.debug("Skipping stale-quarter earnings copy for %s", symbol)
+                continue
 
             if not has_watchlist:
                 if impact != "high":
@@ -389,10 +405,19 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
             continue
 
         kind = "preview"
-        chash = _event_hash(symbol, date_str, quarter, year, kind)
+        chash = _event_hash(symbol, date_str, quarter or 0, year or 0, kind)
         if _headline_exists(chash) or _pending_draft_for_hash(chash):
             continue
         if earnings_ticker_blocked(symbol):
+            continue
+
+        if not is_current_reporting_period(quarter, year, as_of=event_date):
+            logger.debug(
+                "Skipping prior-quarter earnings preview %s Q%s %s",
+                symbol,
+                quarter,
+                year,
+            )
             continue
 
         built = _build_preview(event)

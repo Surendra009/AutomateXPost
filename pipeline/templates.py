@@ -16,6 +16,7 @@ from pipeline.ai_news import (
 from pipeline.earnings_dedup import earnings_ticker_blocked
 from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.draft_quality import draft_quality_reason
+from pipeline.earnings_freshness import earnings_period_is_stale
 from pipeline.earnings_parse import (
     build_earnings_lines,
     extract_earnings_facts,
@@ -153,6 +154,8 @@ def _beat_miss_verb(match: re.Match) -> str:
 def try_earnings_template(headline: Headline, classification: dict) -> TemplateDraft | None:
     text = f"{headline.title} {headline.summary}"
     if classification.get("category") != "earnings" and not EARNINGS_CONTEXT.search(text):
+        return None
+    if earnings_period_is_stale(text):
         return None
     bm = BEAT_MISS.search(headline.title)
     if not bm:

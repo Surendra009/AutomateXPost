@@ -8,6 +8,7 @@ from config import EARNINGS_STALE_DRAFT_HOURS, STALE_DRAFT_HOURS
 from database import get_session
 from logging_config import setup_logging
 from models import Draft, Headline
+from pipeline.earnings_freshness import earnings_period_is_stale
 
 logger = setup_logging()
 
@@ -49,6 +50,14 @@ def expire_stale_drafts() -> int:
                 draft.status = "stale"
                 session.add(draft)
                 expired += 1
+                continue
+
+            if draft.category == "earnings" and headline:
+                text = f"{headline.title} {headline.summary or ''}"
+                if earnings_period_is_stale(text):
+                    draft.status = "stale"
+                    session.add(draft)
+                    expired += 1
         session.commit()
 
     if expired:
