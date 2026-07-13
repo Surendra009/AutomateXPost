@@ -332,7 +332,7 @@ def try_geopolitics_template(headline: Headline, classification: dict) -> Templa
 
     line1 = _shorten(headline.title, 95)
     line2 = _geopolitics_takeaway(headline.title, headline.summary)
-    line3 = _fact_line_from_text(headline.title, headline.summary, _shorten(summary or headline.title, 95))
+    line3 = _fact_line_from_text(headline.title, headline.summary, _shorten(headline.summary or headline.title, 95))
     body = f"{line1}\n{line2}\n{line3}\n\n" + " ".join(f"${t}" for t in tickers)
 
     return TemplateDraft(
