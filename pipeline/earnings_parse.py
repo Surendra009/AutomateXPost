@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 from config import ANTHROPIC_API_KEY, FILTER_MODEL
 from logging_config import setup_logging
+from pipeline.draft_quality import draft_quality_reason
 
 logger = setup_logging()
 
@@ -114,11 +115,16 @@ _HIGHLIGHT_SKIP = re.compile(
 
 _LLM_HIGHLIGHTS_PER_CYCLE = 3
 _llm_highlight_calls = 0
+_llm_bullet_batch_calls = 0
+
+EARNINGS_HIGHLIGHTS_MARKER = "---\nHighlights:"
+_BULLET_LINE = re.compile(r"^[\s•\-\*–—]+|^\d+[\.\)]\s+")
 
 
 def reset_earnings_highlight_budget() -> None:
-    global _llm_highlight_calls
+    global _llm_highlight_calls, _llm_bullet_batch_calls
     _llm_highlight_calls = 0
+    _llm_bullet_batch_calls = 0
 
 
 @dataclass
@@ -211,53 +217,203 @@ def _sentence_highlight_score(sentence: str) -> int:
 
 def extract_earnings_highlight(text: str) -> str | None:
     """Pull a commentary line — segment, guidance, margins, demand, or management angle."""
-    if not text or len(text.strip()) < 25:
-        return None
+    highlights = extract_earnings_highlights(text, max_bullets=1, allow_llm=False)
+    return highlights[0] if highlights else None
 
-    blob = re.sub(r"\s+", " ", text).strip()
+
+def _normalize_bullet(line: str, max_len: int = 110) -> str | None:
+    text = _BULLET_LINE.sub("", line.strip())
+    text = re.sub(r"\s+", " ", text).strip(" \"'")
+    if len(text) < 18:
+        return None
+    if _HIGHLIGHT_SKIP.search(text) and not (
+        _SEGMENT_GROWTH.search(text) or _GUIDANCE_CHANGE.search(text)
+    ):
+        return None
+    return _trim_highlight(text, max_len=max_len)
+
+
+def extract_list_bullets_from_html(html: str, max_bullets: int = 12) -> list[str]:
+    if not html:
+        return []
+    items = re.findall(r"<li[^>]*>(.*?)</li>", html, flags=re.I | re.S)
+    bullets: list[str] = []
+    seen: set[str] = set()
+    for raw in items:
+        text = re.sub(r"<[^>]+>", " ", raw)
+        text = re.sub(r"\s+", " ", text).strip()
+        cleaned = _normalize_bullet(text)
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        bullets.append(cleaned)
+        if len(bullets) >= max_bullets:
+            break
+    return bullets
+
+
+def extract_bullets_from_plaintext(text: str, max_bullets: int = 12) -> list[str]:
+    bullets: list[str] = []
+    seen: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not (_BULLET_LINE.match(stripped) or stripped.startswith("•")):
+            continue
+        cleaned = _normalize_bullet(stripped)
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        bullets.append(cleaned)
+        if len(bullets) >= max_bullets:
+            break
+    return bullets
+
+
+def _dedupe_highlights(items: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        key = re.sub(r"\W+", " ", item.lower()).strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def extract_earnings_highlights(
+    text: str,
+    *,
+    ticker: str = "",
+    max_bullets: int | None = None,
+    allow_llm: bool = True,
+    html: str = "",
+) -> list[str]:
+    """Up to N commentary bullets from press release HTML or article text."""
+    from config import MAX_EARNINGS_HIGHLIGHTS
+
+    max_bullets = max_bullets if max_bullets is not None else MAX_EARNINGS_HIGHLIGHTS
+    if max_bullets <= 0:
+        return []
+
     candidates: list[tuple[int, str]] = []
 
-    seg = _SEGMENT_GROWTH.search(blob)
-    if seg:
-        segment = seg.group(1).strip()
-        pct = seg.group(2)
-        candidates.append((92, f"{segment} revenue up {pct}% — stood out in the quarter"))
+    for bullet in extract_list_bullets_from_html(html, max_bullets=max_bullets):
+        candidates.append((95, bullet))
+    for bullet in extract_bullets_from_plaintext(text, max_bullets=max_bullets):
+        candidates.append((90, bullet))
 
-    guide = _GUIDANCE_CHANGE.search(blob)
-    if guide:
-        phrase = guide.group(0).strip()
-        candidates.append((90, _trim_highlight(phrase.capitalize())))
+    blob = re.sub(r"\s+", " ", text or "").strip()
+    if blob:
+        seg = _SEGMENT_GROWTH.search(blob)
+        if seg:
+            segment = seg.group(1).strip()
+            pct = seg.group(2)
+            candidates.append((92, f"{segment} revenue up {pct}%"))
 
-    margin = _MARGIN_MOVE.search(blob)
-    if margin:
-        candidates.append((85, _trim_highlight(margin.group(0).capitalize())))
+        for pattern, score in (
+            (_GUIDANCE_CHANGE, 90),
+            (_MARGIN_MOVE, 85),
+            (_DEMAND_SIGNAL, 80),
+            (_BEAT_DRIVER, 78),
+            (_QUOTE_CLAUSE, 75),
+        ):
+            match = pattern.search(blob)
+            if match:
+                phrase = match.group(0).strip()
+                if pattern is _BEAT_DRIVER:
+                    reason = match.group(1).strip()
+                    if len(reason) > 12:
+                        phrase = reason
+                cleaned = _normalize_bullet(phrase)
+                if cleaned and not draft_quality_reason(cleaned):
+                    candidates.append((score, cleaned))
 
-    demand = _DEMAND_SIGNAL.search(blob)
-    if demand:
-        candidates.append((80, _trim_highlight(demand.group(0).capitalize())))
-
-    driver = _BEAT_DRIVER.search(blob)
-    if driver:
-        reason = driver.group(1).strip()
-        if len(reason) > 12:
-            candidates.append((78, _trim_highlight(f"Beat driven by {reason}")))
-
-    quote = _QUOTE_CLAUSE.search(blob)
-    if quote:
-        q = quote.group(0).strip()
-        q = re.sub(r"^(CEO|CFO|executive|management|company)\s+", "", q, flags=re.I)
-        candidates.append((75, _trim_highlight(q)))
-
-    for sentence in _sentences(blob):
-        score = _sentence_highlight_score(sentence)
-        if score >= 30:
-            candidates.append((score, _trim_highlight(sentence)))
-
-    if not candidates:
-        return None
+        for sentence in _sentences(blob):
+            score = _sentence_highlight_score(sentence)
+            if score >= 30:
+                cleaned = _normalize_bullet(sentence)
+                if cleaned and not draft_quality_reason(cleaned):
+                    candidates.append((score, cleaned))
 
     candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
+    highlights = _dedupe_highlights([item[1] for item in candidates])
+    highlights = [h for h in highlights if not draft_quality_reason(h)]
+
+    if len(highlights) < max_bullets and allow_llm and len(blob) >= 250 and ticker:
+        llm_bullets = llm_earnings_highlights(blob, ticker, max_bullets=max_bullets)
+        llm_bullets = [b for b in llm_bullets if not draft_quality_reason(b)]
+        highlights = _dedupe_highlights(highlights + llm_bullets)
+
+    return highlights[:max_bullets]
+
+
+def llm_earnings_highlights(source_text: str, ticker: str, max_bullets: int = 10) -> list[str]:
+    """Extract up to N bullets from a long press release via one cheap LLM call."""
+    global _llm_bullet_batch_calls
+    from config import FILTER_MODEL, FILTER_PROVIDER, LLM_EARNINGS_BULLET_BATCHES_PER_CYCLE
+    from pipeline.llm_providers import call_llm, deepseek_configured
+
+    if len(source_text) < 250:
+        return []
+    if not deepseek_configured() and not ANTHROPIC_API_KEY:
+        return []
+    if _llm_bullet_batch_calls >= LLM_EARNINGS_BULLET_BATCHES_PER_CYCLE:
+        return []
+
+    prompt = (
+        f"Ticker: {ticker}\n"
+        f"Press release excerpt:\n{source_text[:5000]}\n\n"
+        f"Return a JSON array of up to {max_bullets} short bullet strings "
+        "(max 100 chars each). Facts only: segment growth %, margins, guidance "
+        "ranges, product metrics, stated demand. No opinions, predictions, or "
+        "interpretation. Plain strings only, no numbering."
+    )
+    system = "You extract factual earnings data points as a JSON string array. No opinions."
+    raw = call_llm(
+        system,
+        prompt,
+        model=FILTER_MODEL,
+        provider=FILTER_PROVIDER,
+        max_tokens=700,
+        retry=False,
+        role="filter",
+    )
+    _llm_bullet_batch_calls += 1
+    if not raw:
+        return []
+
+    try:
+        import json
+
+        start = raw.find("[")
+        end = raw.rfind("]")
+        if start < 0 or end <= start:
+            return []
+        parsed = json.loads(raw[start : end + 1])
+        if not isinstance(parsed, list):
+            return []
+    except Exception:
+        return []
+
+    bullets: list[str] = []
+    for item in parsed:
+        if not isinstance(item, str):
+            continue
+        cleaned = _normalize_bullet(item, max_len=100)
+        if cleaned and not draft_quality_reason(cleaned):
+            bullets.append(cleaned)
+        if len(bullets) >= max_bullets:
+            break
+    return bullets
 
 
 def llm_earnings_highlight(source_text: str, ticker: str) -> str | None:
@@ -276,11 +432,11 @@ def llm_earnings_highlight(source_text: str, ticker: str) -> str | None:
     prompt = (
         f"Ticker: {ticker}\n"
         f"Text:\n{source_text[:2200]}\n\n"
-        "Write ONE earnings commentary line (max 90 chars) about segment strength, "
-        "guidance, margins, demand, or management outlook. "
+        "Write ONE factual earnings line (max 90 chars): segment metric, guidance "
+        "range, margin, or demand figure from the text. No opinions. "
         "Do not repeat EPS/revenue headline numbers. Plain text only."
     )
-    system = "You extract one sharp earnings highlight for a stock post."
+    system = "You extract one factual earnings data point. No opinions or predictions."
     raw = call_llm(
         system,
         prompt,
@@ -305,14 +461,46 @@ def resolve_earnings_highlight(
     *,
     article_text: str = "",
     allow_llm: bool = True,
+    html: str = "",
 ) -> str | None:
     combined = " ".join(part for part in (source_text, article_text) if part).strip()
-    highlight = extract_earnings_highlight(combined)
-    if highlight:
-        return highlight
-    if allow_llm and article_text:
-        return llm_earnings_highlight(combined, ticker)
-    return extract_earnings_highlight(article_text) if article_text else None
+    highlights = extract_earnings_highlights(
+        combined,
+        ticker=ticker,
+        max_bullets=1,
+        allow_llm=allow_llm,
+        html=html,
+    )
+    if highlights:
+        return highlights[0]
+    if article_text:
+        return extract_earnings_highlight(article_text)
+    return None
+
+
+def earnings_tweet_text(text: str) -> str:
+    """Postable X copy — strip reference highlights below the marker."""
+    if EARNINGS_HIGHLIGHTS_MARKER in text:
+        return text.split(EARNINGS_HIGHLIGHTS_MARKER, 1)[0].strip()
+    return text.strip()
+
+
+def format_earnings_draft(
+    line1: str,
+    line2: str,
+    line3: str,
+    *,
+    highlights: list[str] | None = None,
+    ticker: str | None = None,
+) -> str:
+    """Three-line post hook plus optional bullet reference section."""
+    body = f"{line1}\n{line2}\n{line3}".strip()
+    if ticker:
+        body = f"{body}\n\n${ticker.upper()}"
+    if highlights:
+        bullet_lines = "\n".join(f"• {item}" for item in highlights[:10])
+        body = f"{body}\n\n{EARNINGS_HIGHLIGHTS_MARKER}\n{bullet_lines}"
+    return body.strip()
 
 
 def fetch_earnings_news_context(symbol: str, days_back: int = 2) -> str:
@@ -438,8 +626,8 @@ def _revenue_surprise_pct(actual: str, estimate: str) -> float | None:
         return None
 
 
-def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str:
-    """Company-specific line 3 — derived from numbers, not a shared template."""
+def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str | None:
+    """Company-specific line 3 — numeric only, no generic filler."""
     eps_surp = None
     if facts.eps_actual and facts.eps_estimate:
         eps_surp = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
@@ -451,36 +639,33 @@ def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str:
     if verb == "beat":
         if eps_surp is not None and rev_surp is not None:
             if eps_surp >= 25 and rev_surp < 3:
-                return (
-                    f"EPS crushed estimates but revenue only cleared by {rev_surp:.0f}% — "
-                    "margins or one-offs likely drove the print"
-                )
+                return f"EPS beat consensus by {eps_surp:.0f}%; revenue beat by {rev_surp:.0f}%"
             if rev_surp >= 5 and eps_surp >= 5:
-                return (
-                    f"Revenue beat {rev_surp:.0f}% too — broad-based quarter, not a skinny top-line miss"
-                )
+                return f"Revenue beat {rev_surp:.0f}% and EPS beat {eps_surp:.0f}%"
             if rev_surp < -1:
-                return "EPS beat despite revenue missing — margin story needs to hold on the call"
+                return f"EPS beat {eps_surp:.0f}% but revenue missed by {abs(rev_surp):.0f}%"
         if eps_surp is not None and eps_surp >= 80:
-            return f"Street was {eps_surp:.0f}% too low on EPS — models need a full reset after the call"
+            return f"EPS beat consensus by {eps_surp:.0f}%"
         if eps_surp is not None and eps_surp >= 20:
-            return f"{eps_surp:.0f}% EPS surprise — sets a high bar for forward guidance tonight"
+            return f"EPS beat consensus by {eps_surp:.0f}%"
         if rev_surp is not None and rev_surp >= 8:
-            return f"Revenue beat {rev_surp:.0f}% vs est — top-line momentum backs the EPS upside"
+            return f"Revenue beat consensus by {rev_surp:.0f}%"
         if facts.yoy_pct:
-            return f"Revenue up {facts.yoy_pct}% YoY — growth vs guide is the key read from here"
-        return "Segment mix and full-year outlook on the call decide if the beat sticks"
+            return f"Revenue up {facts.yoy_pct}% YoY"
+        return None
 
     if verb == "missed":
         if eps_surp is not None and rev_surp is not None and rev_surp < -2:
-            return f"Revenue missed {abs(rev_surp):.0f}% too — demand softness may be the bigger story"
+            return f"EPS missed {abs(eps_surp):.0f}% and revenue missed {abs(rev_surp):.0f}%"
         if eps_surp is not None and eps_surp <= -15:
-            return f"EPS {abs(eps_surp):.0f}% below street — watch for guide cuts and margin commentary"
-        return "Miss opens downside risk — guidance and segment detail on the call matter most"
+            return f"EPS {abs(eps_surp):.0f}% below consensus"
+        if rev_surp is not None and rev_surp < 0:
+            return f"Revenue missed by {abs(rev_surp):.0f}% vs est"
+        return None
 
     if facts.yoy_pct:
-        return f"Revenue growth ran +{facts.yoy_pct}% YoY — compare that pace to management's outlook"
-    return "Print is in — segment breakdown and guide frame the trade from here"
+        return f"Revenue growth +{facts.yoy_pct}% YoY"
+    return None
 
 
 def build_earnings_lines(
@@ -491,8 +676,12 @@ def build_earnings_lines(
     source_text: str = "",
     article_text: str = "",
     allow_llm: bool = True,
-) -> tuple[str, str, str] | None:
-    """Hook (EPS) + revenue/facts line + company-specific commentary."""
+    html: str = "",
+    max_highlights: int | None = None,
+) -> tuple[str, str, str, list[str]] | None:
+    from config import MAX_EARNINGS_HIGHLIGHTS
+
+    max_highlights = max_highlights if max_highlights is not None else MAX_EARNINGS_HIGHLIGHTS
     if not facts.has_numbers():
         return None
 
@@ -517,11 +706,12 @@ def build_earnings_lines(
     else:
         return None
 
-    highlight = resolve_earnings_highlight(
-        source_text,
-        ticker,
-        article_text=article_text,
+    highlights = extract_earnings_highlights(
+        " ".join(part for part in (source_text, article_text) if part),
+        ticker=ticker,
+        max_bullets=max_highlights,
         allow_llm=allow_llm,
+        html=html,
     )
 
     if facts.revenue_actual and facts.revenue_estimate and "revenue" not in line1.lower():
@@ -532,15 +722,37 @@ def build_earnings_lines(
         surprise = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
         if surprise is not None:
             word = "cleared" if surprise >= 0 else "missed"
-            line2 = f"EPS {word} the street by {abs(surprise):.0f}%"
+            line2 = f"EPS {word} consensus by {abs(surprise):.0f}%"
         else:
-            line2 = "Headline numbers vs the street"
+            line2 = f"EPS {facts.eps_actual} vs {facts.eps_estimate} est"
+    elif facts.revenue_actual:
+        line2 = f"Revenue {facts.revenue_actual}"
     else:
-        line2 = "Full segment breakdown on the call"
+        line2 = f"{ticker} reported {q}results"
 
-    if highlight and highlight.lower() not in line2.lower():
-        line3 = highlight
-    else:
-        line3 = build_earnings_insight(ticker, verb, facts)
+    insight = build_earnings_insight(ticker, verb, facts)
+    line3 = None
+    for candidate in (
+        highlights[0] if highlights else None,
+        highlights[1] if len(highlights) > 1 else None,
+        insight,
+    ):
+        if not candidate:
+            continue
+        low = candidate.lower()
+        if low in line1.lower() or low in line2.lower():
+            continue
+        if draft_quality_reason(candidate):
+            continue
+        line3 = candidate
+        break
 
-    return line1, line2, line3
+    if not line3:
+        if facts.revenue_actual and "revenue" not in line1.lower() and "revenue" not in line2.lower():
+            line3 = f"Revenue {facts.revenue_actual}"
+        elif facts.eps_actual and "eps" not in line1.lower():
+            line3 = f"EPS {facts.eps_actual}"
+        else:
+            return None
+
+    return line1, line2, line3, highlights

@@ -11,6 +11,7 @@ from models import Draft, Headline
 from pipeline.ai_news import infer_ai_tickers
 from pipeline.draft_budget import DraftBudget
 from pipeline.dedup import was_recently_drafted
+from pipeline.draft_quality import draft_quality_reason, has_concrete_detail
 from pipeline.earnings_dedup import (
     earnings_ticker_blocked,
     extract_ticker_from_text,
@@ -44,33 +45,44 @@ Return JSON only:
 ## When to skip (skip=true)
 - Vague wire headlines with no specific company or data
 - Rehashed news with no new information
-- Can't explain what happened AND why it matters with real specifics
+- Can't fill 3 lines with real numbers, names, or facts from the article
 
-## Post layout (use \\n in text) — aim for 4 substantive lines before tickers
+## Post layout (use \\n in text) — 3–4 substantive lines before tickers
 ```
-Hook — company + concrete surprise (number or action)
+Hook — company + concrete surprise (number or named action)
 
-Key detail — segment, product, deal size, or guidance change with numbers
+Key detail — segment, product, deal size, or guidance change WITH numbers
 
-Second detail — margin, demand, YoY %, management quote, or competitive angle
+Second detail — margin %, YoY growth, guidance range, or quoted metric from the article
 
-Why it matters — stock impact, who wins/loses, what to watch next
+Optional fourth line — another reported fact (segment, deal term, product metric)
 
 $TICKER
 ```
 
-For earnings: include EPS/revenue vs consensus, surprise %, AND one segment/guidance highlight from the article.
+For earnings: EPS/revenue vs consensus, surprise %, plus one more reported segment or guidance fact.
 
 ## Tone
-- Informative and conversational — sharp market analyst, not a wire headline
-- Use plain language; explain acronyms once if needed
+- **Facts only** — wire-style reporting: what was reported, with numbers
+- No interpretation, predictions, sentiment, or "why it matters" editorial
+- Every line must be verifiable from the article or press release
+
+## BANNED (never write these — skip the story instead)
+- Any opinion or speculation: likely, may, might, could, should, seems, bullish, bearish
+- "Investors are worried / watching / awaiting"
+- "Is this going to be big?" or any rhetorical question
+- "Matter most", "frame the trade", "what to watch", "remains to be seen"
+- "Wall Street", "markets digest", "traders eye" as the subject
+- Editorial afterthoughts after an em dash (—) that interpret the data
+- Vague lines with no numbers: "forward outlook reset", "under pressure", "in focus"
+- Padding that could apply to any ticker
 
 ## Rules
 - Use ALL important numbers from the article (up to 5 figures total)
-- Pull segment breakdown, guidance, margins, or demand when present — do not stop at headline EPS only
+- Report guidance changes as stated (raised to $X, cut to Y%) — do not judge if it's good or bad
 - Target 260–320 characters (BREAKING/CONTEXT); SUMMARY up to ~400
-- Line 1 must stop the scroll — company + concrete action or surprise number
-- Never open with "Investors", "Markets", "Traders", or "Wall Street"
+- Line 1 = company + reported result or surprise number
+- At least TWO lines must contain a $ figure, %, or named product/segment
 - Sentence case. No emojis. Cashtags on the last line only
 - Don't copy the headline verbatim
 
@@ -78,7 +90,7 @@ For earnings: include EPS/revenue vs consensus, surprise %, AND one segment/guid
 ```
 PENG beat Q3 EPS $0.84 — 53% above consensus
 Revenue $479M vs $414M est
-Infrastructure segment drove the beat; management raised full-year guide on AI server demand
+Infrastructure segment +28% YoY; FY guide raised to $1.9–2.0B
 
 $PENG
 ```"""
@@ -104,7 +116,11 @@ def _build_draft_prompt(headline: Headline, classification: dict, article_text: 
         parts.append(f"Angle: {classification['angle']}")
     if article_text:
         parts.append(f"Article excerpt (use specific details from here):\n{article_text[:DRAFT_ARTICLE_CHARS]}")
-    parts.append("\nDecide skip or write the post. Return JSON.")
+    parts.append(
+        "\nDecide skip or write the post. Return JSON. "
+        "Facts only — no opinions. If you cannot cite at least two concrete facts "
+        "(numbers, %, product/segment names) from the source, set skip=true."
+    )
     return "\n\n".join(parts)
 
 
@@ -314,7 +330,8 @@ def draft_posts(
 
         if not text or not _passes_style_check(text, fmt):
             logger.info("Style check failed for headline %s", headline.id)
-            _discard_headline(headline, "style check failed")
+            reason = draft_quality_reason(text) or "insufficient concrete detail"
+            _discard_headline(headline, f"style check failed: {reason}")
             continue
 
         if _is_headline_echo(text, headline.title):
@@ -377,6 +394,15 @@ def _passes_style_check(text: str, fmt: str, *, relaxed: bool = False) -> bool:
         re.I,
     )
     if jargon.search(text):
+        return False
+
+    generic = draft_quality_reason(text)
+    if generic:
+        return False
+
+    body_lines = [ln for ln in lines if not _is_cashtag_line(ln)]
+    concrete_lines = sum(1 for ln in body_lines if has_concrete_detail(ln))
+    if concrete_lines < 2:
         return False
 
     return True

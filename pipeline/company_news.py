@@ -14,7 +14,8 @@ from pipeline.finnhub_api import finnhub_get, get_finnhub_key, parse_finnhub_tim
 from pipeline.freshness import is_fresh
 from pipeline.noise import is_title_noise
 from pipeline.structured_common import content_hash, save_structured_draft
-from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts
+from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts, format_earnings_draft
+from pipeline.draft_quality import draft_quality_reason
 from pipeline.enrich import fetch_article_text
 from pipeline.watchlist_scope import normalized_watchlist
 
@@ -68,6 +69,13 @@ def _ticker_matches_headline(ticker: str, headline: str) -> bool:
     return True
 
 
+def _shorten_deal_headline(headline: str, max_len: int = 95) -> str:
+    text = headline.strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rsplit(" ", 1)[0] + "…"
+
+
 def _beat_miss_word(match: re.Match) -> str:
     word = match.group(0).lower()
     if word in ("missed", "misses", "missing", "fell short", "below expectations"):
@@ -103,23 +111,41 @@ def _build_draft(
         )
         if not lines:
             return None
-        line1, line2, line3 = lines
+        line1, line2, line3, highlights = lines
         impact = "high" if verb in ("beat", "missed") else "med"
         fmt = "BREAKING"
         confidence = 0.9
         category = "earnings"
-        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
+        draft = format_earnings_draft(
+            line1, line2, line3, highlights=highlights, ticker=symbol
+        )
         return draft, category, impact, fmt, confidence, line1
     elif GUIDANCE.search(text):
-        line1 = f"{symbol} updated guidance"
-        line2 = "Forward outlook reset for the stock"
+        guide = GUIDANCE.search(text)
+        action = guide.group(0) if guide else "updated guidance"
+        line1 = f"{symbol} {action}"
+        pct = re.search(r"(\d+\.?\d*)%", text)
+        money = re.search(r"\$[\d,.]+[BMK]?", text)
+        if pct and money:
+            line2 = f"Guide now {money.group(0)} ({pct.group(1)}% change) per release"
+        elif money:
+            line2 = f"New guide: {money.group(0)}"
+        elif pct:
+            line2 = f"Guidance moved {pct.group(1)}%"
+        else:
+            detail = (summary or headline)[:90].strip()
+            line2 = detail if len(detail) > 25 else f"{symbol} {action}"
+        if draft_quality_reason(line2):
+            return None
         impact = "high"
         fmt = "BREAKING"
         confidence = 0.88
         category = "earnings"
     elif DEAL.search(headline):
-        line1 = f"{symbol} M&A headline"
-        line2 = headline[:72] + ("…" if len(headline) > 72 else "")
+        line1 = _shorten_deal_headline(headline)
+        line2 = (summary or headline)[:95].strip()
+        if len(line2) < 20:
+            line2 = line1
         impact = "high"
         fmt = "BREAKING"
         confidence = 0.86

@@ -22,6 +22,7 @@ from config import (
 from database import count_posts_today, get_session, last_post_time
 from logging_config import setup_logging
 from models import Draft, Headline, Post
+from pipeline.earnings_parse import earnings_tweet_text
 from pipeline.freshness import is_fresh, max_age_hours_for_category
 from pipeline.url_resolve import fetch_og_image
 
@@ -172,7 +173,7 @@ def publish_draft(
     """Approve and publish a draft. Returns the Post record."""
     check_safety_rails(draft, daily_cap, cooldown_minutes)
 
-    post_text = text or draft.text
+    post_text = earnings_tweet_text(text or draft.text)
     settings = get_settings()
     tweets = _split_thread(post_text, draft.format)
     media_url = ""

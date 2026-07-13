@@ -15,9 +15,11 @@ from pipeline.ai_news import (
 )
 from pipeline.earnings_dedup import earnings_ticker_blocked
 from pipeline.earnings_enrich import enrich_earnings_context
+from pipeline.draft_quality import draft_quality_reason
 from pipeline.earnings_parse import (
     build_earnings_lines,
     extract_earnings_facts,
+    format_earnings_draft,
 )
 
 # ── Earnings patterns ─────────────────────────────────────────────────────
@@ -68,15 +70,7 @@ MACRO_LABELS = {
     "interest rate decision": "Fed",
 }
 
-MACRO_TAKEAWAY = {
-    "CPI": "Inflation print shifts rate-cut expectations",
-    "PPI": "Producer prices feed into the inflation outlook",
-    "Nonfarm payrolls": "Labor strength affects Fed and rate path",
-    "Jobs report": "Labor strength affects Fed and rate path",
-    "Unemployment": "Labor market signal for the Fed",
-    "GDP": "Growth read shapes recession vs soft-landing odds",
-    "Fed": "Rates path repriced across stocks and bonds",
-}
+MACRO_TAKEAWAY: dict[str, str] = {}  # factual line2 comes from headline text
 
 GEOPOLITICS_SIGNAL = re.compile(
     r"\b("
@@ -178,7 +172,7 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
         finnhub_facts=facts,
         finnhub_summary=text,
         headline_url=headline.url or "",
-        skip_web_search=True,
+        skip_web_search=False,
     )
     if enrichment.news_context or enrichment.article_text:
         facts = enrichment.facts or extract_earnings_facts(
@@ -190,13 +184,23 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
         facts,
         source_text=enrichment.news_context or text,
         article_text=enrichment.article_text,
+        html=enrichment.press_html,
     )
     if not lines:
         return None
 
-    line1, line2, line3 = lines
-    ticker_line = " ".join(f"${t}" for t in tickers)
-    body = f"{line1}\n{line2}\n{line3}\n\n{ticker_line}".strip()
+    line1, line2, line3, highlights = lines
+    if enrichment.highlights:
+        highlights = enrichment.highlights
+    body = format_earnings_draft(
+        line1,
+        line2,
+        line3,
+        highlights=highlights,
+        ticker=tickers[0] if len(tickers) == 1 else None,
+    )
+    if len(tickers) > 1:
+        body = f"{body}\n\n" + " ".join(f"${t}" for t in tickers)
     impact = "high" if verb in ("beat", "missed") else "med"
 
     return TemplateDraft(
@@ -238,7 +242,9 @@ def try_macro_template(headline: Headline, classification: dict) -> TemplateDraf
         else:
             line1 = _shorten(headline.title, 72)
 
-    line2 = MACRO_TAKEAWAY.get(label, "Macro data moves rates and risk assets")
+    line2 = MACRO_TAKEAWAY.get(label) or _second_fact_from_text(headline.title, headline.summary, label)
+    if draft_quality_reason(line2):
+        line2 = _second_fact_from_text(headline.title, headline.summary, label)
     body = f"{line1}\n{line2}\n\n$SPY"
     return TemplateDraft(
         text=body,
@@ -257,26 +263,54 @@ def _shorten(text: str, max_len: int) -> str:
     return text[: max_len - 1].rsplit(" ", 1)[0] + "…"
 
 
+def _fact_line_from_text(title: str, summary: str, fallback: str) -> str:
+    text = f"{title} {summary}"
+    pct = re.search(r"(\d+\.?\d*)%", text)
+    money = re.search(r"\$[\d,.]+[BMK]?", text)
+    if pct and money:
+        return f"{money.group(0)} print ({pct.group(1)}% move) in the release"
+    if money:
+        return f"Deal/value cited at {money.group(0)}"
+    if pct:
+        return f"Key metric moved {pct.group(1)}%"
+    line = _shorten(summary or title, 95)
+    return line if len(line) > 20 and not draft_quality_reason(line) else fallback
+
+
+def _second_fact_from_text(title: str, summary: str, label: str) -> str:
+    """Second factual line for macro/templates — no interpretation."""
+    text = f"{title} {summary}"
+    prior = re.search(
+        r"(?:prior|previous|last)\s+(?:month|quarter|year|reading)\s+(?:was\s+)?(\d+\.?\d*)%?",
+        text,
+        re.I,
+    )
+    if prior:
+        return f"Prior {label} reading was {prior.group(1)}%"
+    jobs = re.search(r"(\d[\d,]*)\s+jobs", text, re.I)
+    if jobs:
+        return f"Reported {jobs.group(1)} jobs"
+    return _fact_line_from_text(title, summary, f"{label} report vs expectations")
+
+
 def _ai_takeaway(title: str, summary: str) -> str:
-    blob = f"{title} {summary}".lower()
-    if re.search(r"\bapi\b|sdk|developers?", blob):
-        return "Gives builders a new hook into the stack"
-    if re.search(r"\b(model|gpt|claude|gemini|llama)\b", blob):
-        return "Raises the bar in the model race"
-    if re.search(r"\bmobile|app|ios|android\b", blob):
-        return "Puts AI in more users' hands"
-    if re.search(r"\bagent|copilot|automation\b", blob):
-        return "Pushes agents closer to daily workflows"
-    return "Another step in the AI product war"
+    blob = f"{title} {summary}"
+    named = re.search(
+        r"\b(GPT-\d|Claude|Gemini|Llama|Copilot|API|SDK|iOS|Android)\b[^.]{0,60}",
+        blob,
+        re.I,
+    )
+    if named:
+        return _shorten(named.group(0).strip(), 95)
+    return _fact_line_from_text(title, summary, _shorten(summary or title, 95))
 
 
 def _geopolitics_takeaway(title: str, summary: str) -> str:
-    blob = f"{title} {summary}".lower()
-    if re.search(r"\b(iran|tanker|hormuz|strike|missile|attacks)\b", blob):
-        return "Oil supply risk rises — energy names reprice quickly"
-    if re.search(r"\b(oil|crude|opec|gas)\b", blob):
-        return "Crude volatility spreads to majors and oil ETFs"
-    return "Geopolitical risk shifts defensive and energy trades"
+    blob = f"{title} {summary}"
+    oil = re.search(r"\b(\d+\.?\d*)%?\s*(?:jump|rise|surge|fall|drop)?[^.]{0,30}\b(oil|crude|brent|wti)\b", blob, re.I)
+    if oil:
+        return _shorten(oil.group(0).strip(), 95)
+    return _fact_line_from_text(title, summary, _shorten(summary or title, 95))
 
 
 def try_geopolitics_template(headline: Headline, classification: dict) -> TemplateDraft | None:
@@ -295,7 +329,7 @@ def try_geopolitics_template(headline: Headline, classification: dict) -> Templa
 
     line1 = _shorten(headline.title, 95)
     line2 = _geopolitics_takeaway(headline.title, headline.summary)
-    line3 = "Watch oil majors and energy ETFs for follow-through"
+    line3 = _fact_line_from_text(headline.title, headline.summary, _shorten(summary or headline.title, 95))
     body = f"{line1}\n{line2}\n{line3}\n\n" + " ".join(f"${t}" for t in tickers)
 
     return TemplateDraft(

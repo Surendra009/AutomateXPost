@@ -23,6 +23,7 @@ from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.earnings_parse import (
     EarningsFacts,
     build_earnings_lines,
+    format_earnings_draft,
 )
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key
 from database import get_session, get_setting
@@ -137,7 +138,7 @@ def _build_preview(event: dict[str, Any]) -> tuple[str, str, str] | None:
 
     line1 = f"{symbol} reports {hour_tag} today" if hour_tag else f"{symbol} reports {timing} today"
     line2 = est_line
-    line3 = "Watch segment commentary, margins, and full-year guide on the call"
+    line3 = f"Consensus {est_line}" if est_line else f"{symbol} earnings today"
     draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
     return title, summary, draft
 
@@ -206,11 +207,16 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
         facts,
         source_text=enrichment.news_context or summary,
         article_text=enrichment.article_text,
-        allow_llm=False,
+        allow_llm=True,
+        html=enrichment.press_html,
     )
     if lines:
-        line1, line2, line3 = lines
-        draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
+        line1, line2, line3, highlights = lines
+        if enrichment.highlights:
+            highlights = enrichment.highlights
+        draft = format_earnings_draft(
+            line1, line2, line3, highlights=highlights, ticker=symbol
+        )
     else:
         line1 = f"{symbol} {verb} {q_label}EPS {eps_actual_s} vs {eps_est_s} est"
         line2 = (
@@ -218,7 +224,13 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
             if rev_actual_s and rev_est_s
             else "Segment detail on the call"
         )
-        line3 = "Guidance and margins set the next move"
+        line3 = (
+            f"Revenue {rev_actual_s} vs {rev_est_s} est"
+            if rev_actual_s and rev_est_s
+            else f"EPS {eps_actual_s} vs {eps_est_s} est"
+            if eps_actual_s and eps_est_s
+            else f"{symbol} {verb} {q_label}earnings"
+        )
         draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
 
     impact = "high" if overall in ("beat", "miss") else "med"
