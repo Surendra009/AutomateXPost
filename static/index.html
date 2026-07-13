@@ -107,15 +107,10 @@
       <section id="chat-screen" class="page-section hidden">
         <div id="chat-thread" class="chat-thread">
           <div class="chat-welcome">
-            <h2>Search assistant</h2>
-            <p>Ask about any topic — searches your drafts and Google News automatically.</p>
+            <h2>Research assistant</h2>
+            <p>Ask in plain English — searches your queue, headlines, and live Google News.</p>
             <p id="chat-model-note" class="chat-model-note"></p>
-            <div class="chat-suggestions" id="chat-suggestions">
-              <button type="button" class="chat-chip" data-query="NVDA">NVDA drafts</button>
-              <button type="button" class="chat-chip" data-query="earnings beat">Earnings beats</button>
-              <button type="button" class="chat-chip" data-query="AI agents" data-news="1">AI agents news</button>
-              <button type="button" class="chat-chip" data-query="Iran oil markets">Iran / oil</button>
-            </div>
+            <div class="chat-suggestions" id="chat-suggestions"></div>
           </div>
         </div>
         <div class="chat-compose">
@@ -124,7 +119,7 @@
             <span>Live news</span>
           </label>
           <div class="add-row">
-            <input type="text" id="chat-input" class="input" placeholder="Search drafts or topics…" maxlength="500" autocomplete="off">
+            <input type="text" id="chat-input" class="input" placeholder="e.g. What is NVDA doing with AI? Fed rate outlook…" maxlength="500" autocomplete="off">
             <button type="button" id="chat-send" class="btn btn-approve">Send</button>
           </div>
         </div>

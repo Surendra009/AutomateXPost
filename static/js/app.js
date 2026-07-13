@@ -144,14 +144,14 @@ document.querySelectorAll('.tab').forEach((btn) => {
       stock: 'Stock',
       politics: 'Politics',
       history: 'History',
-      chat: 'Chat',
+      chat: 'Research',
       settings: 'Settings',
     };
     const subtitles = {
       stock: 'Earnings, tickers & markets',
       politics: 'Geopolitics & policy',
       history: 'Posted & rejected',
-      chat: 'Search drafts & topics',
+      chat: 'Search queue & live news',
       settings: 'Pipeline & limits',
     };
     document.getElementById('screen-title').textContent = titles[currentTab];
@@ -196,8 +196,9 @@ function initChatScreen() {
     if (note && chat.provider && chat.provider !== 'none') {
       note.textContent = `Powered by ${chat.provider} · ${chat.model}`;
     } else if (note) {
-      note.textContent = 'No LLM configured — results still work; add ANTHROPIC_API_KEY or OPENAI_API_KEY for summaries.';
+      note.textContent = 'No LLM configured — search still works; add DEEPSEEK_API_KEY or ANTHROPIC_API_KEY for summaries.';
     }
+    renderChatSuggestions(data);
   }).catch(() => {});
 
   document.getElementById('chat-send').addEventListener('click', () => sendChatMessage());
@@ -207,11 +208,41 @@ function initChatScreen() {
       sendChatMessage();
     }
   });
+}
 
-  document.querySelectorAll('.chat-chip').forEach((btn) => {
+function renderChatSuggestions(settings) {
+  const container = document.getElementById('chat-suggestions');
+  if (!container) return;
+
+  const watchlist = settings.watchlist || [];
+  const topics = settings.search_topics || [];
+  const chips = [];
+
+  watchlist.slice(0, 3).forEach((ticker) => {
+    chips.push({ label: `${ticker} queue`, query: ticker, news: true });
+  });
+  topics.slice(0, 2).forEach((topic) => {
+    const short = topic.length > 22 ? `${topic.slice(0, 20)}…` : topic;
+    chips.push({ label: short, query: topic, news: true });
+  });
+  if (chips.length < 4) {
+    chips.push({ label: 'My watchlist', query: 'my watchlist' });
+  }
+  if (chips.length < 5) {
+    chips.push({ label: 'Fed rates', query: 'Federal Reserve interest rates', news: true });
+  }
+  if (chips.length < 6) {
+    chips.push({ label: 'AI news', query: 'artificial intelligence news', news: true });
+  }
+
+  container.innerHTML = chips.map((chip) => `
+    <button type="button" class="chat-chip" data-query="${esc(chip.query)}"${chip.news ? ' data-news="1"' : ''}>${esc(chip.label)}</button>
+  `).join('');
+
+  container.querySelectorAll('.chat-chip').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.getElementById('chat-input').value = btn.dataset.query || '';
-      document.getElementById('chat-live-news').checked = btn.dataset.news === '1';
+      document.getElementById('chat-live-news').checked = btn.dataset.news !== '0';
       sendChatMessage();
     });
   });
