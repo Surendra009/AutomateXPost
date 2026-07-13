@@ -31,6 +31,31 @@ GENERIC_DRAFT_PHRASES = re.compile(
     re.I,
 )
 
+# Interpretation, speculation, and editorializing — not allowed in posts
+OPINION_DRAFT_PHRASES = re.compile(
+    r"\b("
+    r"likely|unlikely|may be|might be|could mean|should |would |"
+    r"seems? to|appears? to|arguably|clearly|obviously|"
+    r"bullish|bearish|overvalued|undervalued|"
+    r"bigger story|drove the print|need repricing|backs the|momentum backs|"
+    r"broad-based|skinny top|one-offs?|offset the|underestimated|overestimated|"
+    r"positive sign|negative sign|red flag|green flag|"
+    r"i think|we think|in my view|"
+    r"who wins|who loses|beneficiar|"
+    r"shifts? .{0,30} expectations|shapes? .{0,20} odds|affects? (?:the )?fed|"
+    r"repriced|reprice|soft-landing|recession vs|"
+    r"crushed estimates|massive|huge|stunning|surprising|"
+    r"worried|nervous|optimis|pessimis|sentiment"
+    r")\b",
+    re.I,
+)
+
+# Clauses after em dash are often hot takes
+_EDITORIAL_TAIL = re.compile(
+    r"—\s*(?:margins?|models?|demand|momentum|story|trade|guide|outlook|investors?).+",
+    re.I,
+)
+
 _OPENER_BAN = re.compile(
     r"^(?:investors?|markets?|traders?|wall street|stocks?)\b",
     re.I,
@@ -56,6 +81,25 @@ _HAS_NAMED_DETAIL = re.compile(
     r")\b[^.]{0,40}\b(up|down|rose|fell|grew|launched|cut|hiked|beat|missed)\b",
     re.I,
 )
+
+
+def opinion_draft_reason(text: str) -> str | None:
+    if not text:
+        return None
+    match = OPINION_DRAFT_PHRASES.search(text)
+    if match:
+        return f"opinion/speculation: {match.group(0)[:40]}"
+    if _EDITORIAL_TAIL.search(text):
+        return "opinion/speculation: editorial clause after dash"
+    return None
+
+
+def draft_quality_reason(text: str) -> str | None:
+    """Return discard reason for vague or opinionated copy."""
+    reason = opinion_draft_reason(text)
+    if reason:
+        return reason
+    return generic_draft_reason(text)
 
 
 def generic_draft_reason(text: str) -> str | None:
@@ -95,7 +139,7 @@ def _is_ticker_line(line: str) -> bool:
 
 
 def passes_draft_quality(text: str, *, require_concrete: bool = True) -> bool:
-    if generic_draft_reason(text):
+    if draft_quality_reason(text):
         return False
     if require_concrete and not has_concrete_detail(text):
         return False

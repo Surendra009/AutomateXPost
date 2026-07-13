@@ -15,7 +15,7 @@ from pipeline.freshness import is_fresh
 from pipeline.noise import is_title_noise
 from pipeline.structured_common import content_hash, save_structured_draft
 from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts, format_earnings_draft
-from pipeline.draft_quality import generic_draft_reason
+from pipeline.draft_quality import draft_quality_reason
 from pipeline.enrich import fetch_article_text
 from pipeline.watchlist_scope import normalized_watchlist
 
@@ -135,7 +135,7 @@ def _build_draft(
         else:
             detail = (summary or headline)[:90].strip()
             line2 = detail if len(detail) > 25 else f"{symbol} {action}"
-        if generic_draft_reason(line2):
+        if draft_quality_reason(line2):
             return None
         impact = "high"
         fmt = "BREAKING"

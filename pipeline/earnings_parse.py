@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 from config import ANTHROPIC_API_KEY, FILTER_MODEL
 from logging_config import setup_logging
-from pipeline.draft_quality import generic_draft_reason
+from pipeline.draft_quality import draft_quality_reason
 
 logger = setup_logging()
 
@@ -332,23 +332,25 @@ def extract_earnings_highlights(
                 if pattern is _BEAT_DRIVER:
                     reason = match.group(1).strip()
                     if len(reason) > 12:
-                        phrase = f"Beat driven by {reason}"
+                        phrase = reason
                 cleaned = _normalize_bullet(phrase)
-                if cleaned:
+                if cleaned and not draft_quality_reason(cleaned):
                     candidates.append((score, cleaned))
 
         for sentence in _sentences(blob):
             score = _sentence_highlight_score(sentence)
             if score >= 30:
                 cleaned = _normalize_bullet(sentence)
-                if cleaned:
+                if cleaned and not draft_quality_reason(cleaned):
                     candidates.append((score, cleaned))
 
     candidates.sort(key=lambda item: item[0], reverse=True)
     highlights = _dedupe_highlights([item[1] for item in candidates])
+    highlights = [h for h in highlights if not draft_quality_reason(h)]
 
     if len(highlights) < max_bullets and allow_llm and len(blob) >= 250 and ticker:
         llm_bullets = llm_earnings_highlights(blob, ticker, max_bullets=max_bullets)
+        llm_bullets = [b for b in llm_bullets if not draft_quality_reason(b)]
         highlights = _dedupe_highlights(highlights + llm_bullets)
 
     return highlights[:max_bullets]
@@ -370,13 +372,12 @@ def llm_earnings_highlights(source_text: str, ticker: str, max_bullets: int = 10
     prompt = (
         f"Ticker: {ticker}\n"
         f"Press release excerpt:\n{source_text[:5000]}\n\n"
-        f        "Return a JSON array of up to {max_bullets} short bullet strings "
-        "(max 100 chars each) with segment growth %, margins, guidance ranges, "
-        "product metrics, and demand data. "
-        "No rhetorical questions, no 'investors worry', no filler. "
-        "Plain strings only, no numbering."
+        f"Return a JSON array of up to {max_bullets} short bullet strings "
+        "(max 100 chars each). Facts only: segment growth %, margins, guidance "
+        "ranges, product metrics, stated demand. No opinions, predictions, or "
+        "interpretation. Plain strings only, no numbering."
     )
-    system = "You extract earnings press-release highlights as a JSON string array."
+    system = "You extract factual earnings data points as a JSON string array. No opinions."
     raw = call_llm(
         system,
         prompt,
@@ -408,7 +409,7 @@ def llm_earnings_highlights(source_text: str, ticker: str, max_bullets: int = 10
         if not isinstance(item, str):
             continue
         cleaned = _normalize_bullet(item, max_len=100)
-        if cleaned:
+        if cleaned and not draft_quality_reason(cleaned):
             bullets.append(cleaned)
         if len(bullets) >= max_bullets:
             break
@@ -431,11 +432,11 @@ def llm_earnings_highlight(source_text: str, ticker: str) -> str | None:
     prompt = (
         f"Ticker: {ticker}\n"
         f"Text:\n{source_text[:2200]}\n\n"
-        "Write ONE earnings commentary line (max 90 chars) about segment strength, "
-        "guidance, margins, demand, or management outlook. "
+        "Write ONE factual earnings line (max 90 chars): segment metric, guidance "
+        "range, margin, or demand figure from the text. No opinions. "
         "Do not repeat EPS/revenue headline numbers. Plain text only."
     )
-    system = "You extract one sharp earnings highlight for a stock post."
+    system = "You extract one factual earnings data point. No opinions or predictions."
     raw = call_llm(
         system,
         prompt,
@@ -638,29 +639,24 @@ def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str 
     if verb == "beat":
         if eps_surp is not None and rev_surp is not None:
             if eps_surp >= 25 and rev_surp < 3:
-                return (
-                    f"EPS crushed estimates but revenue only cleared by {rev_surp:.0f}% — "
-                    "margins or one-offs likely drove the print"
-                )
+                return f"EPS beat consensus by {eps_surp:.0f}%; revenue beat by {rev_surp:.0f}%"
             if rev_surp >= 5 and eps_surp >= 5:
-                return (
-                    f"Revenue beat {rev_surp:.0f}% too — broad-based quarter, not a skinny top-line miss"
-                )
+                return f"Revenue beat {rev_surp:.0f}% and EPS beat {eps_surp:.0f}%"
             if rev_surp < -1:
-                return f"EPS beat but revenue missed by {abs(rev_surp):.0f}% — margin expansion offset the top-line gap"
+                return f"EPS beat {eps_surp:.0f}% but revenue missed by {abs(rev_surp):.0f}%"
         if eps_surp is not None and eps_surp >= 80:
-            return f"Street underestimated EPS by {eps_surp:.0f}% — models need repricing"
+            return f"EPS beat consensus by {eps_surp:.0f}%"
         if eps_surp is not None and eps_surp >= 20:
-            return f"EPS cleared consensus by {eps_surp:.0f}%"
+            return f"EPS beat consensus by {eps_surp:.0f}%"
         if rev_surp is not None and rev_surp >= 8:
-            return f"Revenue beat {rev_surp:.0f}% vs est — top-line momentum backs the EPS upside"
+            return f"Revenue beat consensus by {rev_surp:.0f}%"
         if facts.yoy_pct:
             return f"Revenue up {facts.yoy_pct}% YoY"
         return None
 
     if verb == "missed":
         if eps_surp is not None and rev_surp is not None and rev_surp < -2:
-            return f"Revenue missed {abs(rev_surp):.0f}% too — demand softness may be the bigger story"
+            return f"EPS missed {abs(eps_surp):.0f}% and revenue missed {abs(rev_surp):.0f}%"
         if eps_surp is not None and eps_surp <= -15:
             return f"EPS {abs(eps_surp):.0f}% below consensus"
         if rev_surp is not None and rev_surp < 0:
@@ -746,7 +742,7 @@ def build_earnings_lines(
         low = candidate.lower()
         if low in line1.lower() or low in line2.lower():
             continue
-        if generic_draft_reason(candidate):
+        if draft_quality_reason(candidate):
             continue
         line3 = candidate
         break

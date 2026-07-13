@@ -15,7 +15,7 @@ from pipeline.ai_news import (
 )
 from pipeline.earnings_dedup import earnings_ticker_blocked
 from pipeline.earnings_enrich import enrich_earnings_context
-from pipeline.draft_quality import generic_draft_reason
+from pipeline.draft_quality import draft_quality_reason
 from pipeline.earnings_parse import (
     build_earnings_lines,
     extract_earnings_facts,
@@ -70,15 +70,7 @@ MACRO_LABELS = {
     "interest rate decision": "Fed",
 }
 
-MACRO_TAKEAWAY = {
-    "CPI": "Inflation print shifts rate-cut expectations",
-    "PPI": "Producer prices feed into the inflation outlook",
-    "Nonfarm payrolls": "Labor strength affects Fed and rate path",
-    "Jobs report": "Labor strength affects Fed and rate path",
-    "Unemployment": "Labor market signal for the Fed",
-    "GDP": "Growth read shapes recession vs soft-landing odds",
-    "Fed": "Rates path repriced across stocks and bonds",
-}
+MACRO_TAKEAWAY: dict[str, str] = {}  # factual line2 comes from headline text
 
 GEOPOLITICS_SIGNAL = re.compile(
     r"\b("
@@ -250,7 +242,9 @@ def try_macro_template(headline: Headline, classification: dict) -> TemplateDraf
         else:
             line1 = _shorten(headline.title, 72)
 
-    line2 = MACRO_TAKEAWAY.get(label, _fact_line_from_text(headline.title, headline.summary, f"{label} data vs expectations"))
+    line2 = MACRO_TAKEAWAY.get(label) or _second_fact_from_text(headline.title, headline.summary, label)
+    if draft_quality_reason(line2):
+        line2 = _second_fact_from_text(headline.title, headline.summary, label)
     body = f"{line1}\n{line2}\n\n$SPY"
     return TemplateDraft(
         text=body,
@@ -280,7 +274,23 @@ def _fact_line_from_text(title: str, summary: str, fallback: str) -> str:
     if pct:
         return f"Key metric moved {pct.group(1)}%"
     line = _shorten(summary or title, 95)
-    return line if len(line) > 20 and not generic_draft_reason(line) else fallback
+    return line if len(line) > 20 and not draft_quality_reason(line) else fallback
+
+
+def _second_fact_from_text(title: str, summary: str, label: str) -> str:
+    """Second factual line for macro/templates — no interpretation."""
+    text = f"{title} {summary}"
+    prior = re.search(
+        r"(?:prior|previous|last)\s+(?:month|quarter|year|reading)\s+(?:was\s+)?(\d+\.?\d*)%?",
+        text,
+        re.I,
+    )
+    if prior:
+        return f"Prior {label} reading was {prior.group(1)}%"
+    jobs = re.search(r"(\d[\d,]*)\s+jobs", text, re.I)
+    if jobs:
+        return f"Reported {jobs.group(1)} jobs"
+    return _fact_line_from_text(title, summary, f"{label} report vs expectations")
 
 
 def _ai_takeaway(title: str, summary: str) -> str:
@@ -319,7 +329,7 @@ def try_geopolitics_template(headline: Headline, classification: dict) -> Templa
 
     line1 = _shorten(headline.title, 95)
     line2 = _geopolitics_takeaway(headline.title, headline.summary)
-    line3 = _fact_line_from_text(headline.title, headline.summary, "Energy and defense names tied to the headline")
+    line3 = _fact_line_from_text(headline.title, headline.summary, _shorten(summary or headline.title, 95))
     body = f"{line1}\n{line2}\n{line3}\n\n" + " ".join(f"${t}" for t in tickers)
 
     return TemplateDraft(

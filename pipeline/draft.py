@@ -11,7 +11,7 @@ from models import Draft, Headline
 from pipeline.ai_news import infer_ai_tickers
 from pipeline.draft_budget import DraftBudget
 from pipeline.dedup import was_recently_drafted
-from pipeline.draft_quality import generic_draft_reason, has_concrete_detail
+from pipeline.draft_quality import draft_quality_reason, has_concrete_detail
 from pipeline.earnings_dedup import (
     earnings_ticker_blocked,
     extract_ticker_from_text,
@@ -53,32 +53,35 @@ Hook — company + concrete surprise (number or named action)
 
 Key detail — segment, product, deal size, or guidance change WITH numbers
 
-Second detail — margin %, YoY growth, demand metric, or direct quote fragment
+Second detail — margin %, YoY growth, guidance range, or quoted metric from the article
 
-Optional fourth line — specific implication (who benefits, what changed vs prior guide)
+Optional fourth line — another reported fact (segment, deal term, product metric)
 
 $TICKER
 ```
 
-For earnings: EPS/revenue vs consensus, surprise %, plus segment or guidance fact from the article.
+For earnings: EPS/revenue vs consensus, surprise %, plus one more reported segment or guidance fact.
 
 ## Tone
-- Informative and conversational — sharp market analyst who read the full article
-- Every line must add a NEW fact. No throat-clearing, no mood-setting
+- **Facts only** — wire-style reporting: what was reported, with numbers
+- No interpretation, predictions, sentiment, or "why it matters" editorial
+- Every line must be verifiable from the article or press release
 
 ## BANNED (never write these — skip the story instead)
+- Any opinion or speculation: likely, may, might, could, should, seems, bullish, bearish
 - "Investors are worried / watching / awaiting"
 - "Is this going to be big?" or any rhetorical question
 - "Matter most", "frame the trade", "what to watch", "remains to be seen"
 - "Wall Street", "markets digest", "traders eye" as the subject
+- Editorial afterthoughts after an em dash (—) that interpret the data
 - Vague lines with no numbers: "forward outlook reset", "under pressure", "in focus"
 - Padding that could apply to any ticker
 
 ## Rules
 - Use ALL important numbers from the article (up to 5 figures total)
-- Pull segment breakdown, guidance, margins, or demand when present
+- Report guidance changes as stated (raised to $X, cut to Y%) — do not judge if it's good or bad
 - Target 260–320 characters (BREAKING/CONTEXT); SUMMARY up to ~400
-- Line 1 = company + concrete action or surprise number
+- Line 1 = company + reported result or surprise number
 - At least TWO lines must contain a $ figure, %, or named product/segment
 - Sentence case. No emojis. Cashtags on the last line only
 - Don't copy the headline verbatim
@@ -115,7 +118,8 @@ def _build_draft_prompt(headline: Headline, classification: dict, article_text: 
         parts.append(f"Article excerpt (use specific details from here):\n{article_text[:DRAFT_ARTICLE_CHARS]}")
     parts.append(
         "\nDecide skip or write the post. Return JSON. "
-        "If you cannot cite at least two concrete facts (numbers, %, product/segment names), set skip=true."
+        "Facts only — no opinions. If you cannot cite at least two concrete facts "
+        "(numbers, %, product/segment names) from the source, set skip=true."
     )
     return "\n\n".join(parts)
 
@@ -326,7 +330,7 @@ def draft_posts(
 
         if not text or not _passes_style_check(text, fmt):
             logger.info("Style check failed for headline %s", headline.id)
-            reason = generic_draft_reason(text) or "insufficient concrete detail"
+            reason = draft_quality_reason(text) or "insufficient concrete detail"
             _discard_headline(headline, f"style check failed: {reason}")
             continue
 
@@ -392,7 +396,7 @@ def _passes_style_check(text: str, fmt: str, *, relaxed: bool = False) -> bool:
     if jargon.search(text):
         return False
 
-    generic = generic_draft_reason(text)
+    generic = draft_quality_reason(text)
     if generic:
         return False
 
