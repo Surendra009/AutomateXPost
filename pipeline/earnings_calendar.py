@@ -16,6 +16,7 @@ from pipeline.earnings import (
     _surprise_word,
     fetch_earnings_calendar,
 )
+from pipeline.earnings_freshness import is_current_reporting_period
 from pipeline.finnhub_api import get_finnhub_key
 from pipeline.watchlist_scope import in_watchlist, normalized_watchlist
 from logging_config import setup_logging
@@ -122,6 +123,13 @@ def get_earnings_snapshot(
         try:
             event_date = datetime.strptime(event.get("date") or "", "%Y-%m-%d").date()
         except ValueError:
+            continue
+
+        quarter_raw = event.get("quarter")
+        year_raw = event.get("year")
+        quarter = int(quarter_raw) if quarter_raw not in (None, "", 0) else None
+        year = int(year_raw) if year_raw not in (None, "", 0) else None
+        if not is_current_reporting_period(quarter, year, as_of=event_date):
             continue
 
         if _has_actual(event):

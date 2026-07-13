@@ -4,6 +4,8 @@ import re
 
 from models import Headline
 from pipeline.ai_news import AI_SOURCES, is_ai_source, mentions_ai
+from pipeline.earnings_dedup import headline_looks_like_earnings
+from pipeline.earnings_freshness import earnings_period_is_stale
 from pipeline.feedback import is_learned_noise
 from pipeline.prioritize import is_generic_wire_noise
 
@@ -58,6 +60,8 @@ def is_title_noise(title: str) -> str | None:
         return "listicle/roundup title"
     if NOISE_PATTERNS.search(title):
         return "noise pattern in title"
+    if headline_looks_like_earnings(title) and earnings_period_is_stale(title):
+        return "stale earnings quarter"
     learned = is_learned_noise(title)
     if learned:
         return learned
@@ -76,6 +80,10 @@ def is_obvious_noise(headline: Headline) -> str | None:
 
     if is_generic_wire_noise(headline):
         return "generic wire headline"
+
+    if headline_looks_like_earnings(headline.title, headline.summary):
+        if earnings_period_is_stale(text):
+            return "stale earnings quarter"
 
     if is_ai_source(headline) and mentions_ai(text):
         return None
