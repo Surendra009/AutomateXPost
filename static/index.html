@@ -48,6 +48,13 @@
       <!-- Stock queue -->
       <section id="stock-screen" class="page-section">
         <div id="stock-pull-indicator" class="refresh-hint hidden">Release to refresh</div>
+        <div id="stock-filters" class="queue-filters" role="tablist" aria-label="Filter stock drafts">
+          <button type="button" class="filter-chip active" data-filter="all">All</button>
+          <button type="button" class="filter-chip" data-filter="earnings">Earnings</button>
+          <button type="button" class="filter-chip" data-filter="ai">AI</button>
+          <button type="button" class="filter-chip" data-filter="macro">Macro</button>
+          <button type="button" class="filter-chip" data-filter="watchlist">Watchlist</button>
+        </div>
         <div id="stock-list" class="queue"></div>
         <div id="stock-empty" class="empty hidden">
           <div class="empty-icon">📈</div>
@@ -205,6 +212,15 @@
               <button type="button" class="btn btn-secondary" id="resume-pipeline">Resume</button>
             </div>
             <p id="pause-status" class="pause-note hidden"></p>
+          </div>
+        </div>
+
+        <div class="group">
+          <div class="group-label">Earnings calendar</div>
+          <div class="group-card">
+            <div id="earnings-calendar-panel" class="earnings-calendar-panel">
+              <p class="row-desc block muted-note">Loading…</p>
+            </div>
           </div>
         </div>
 

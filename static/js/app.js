@@ -22,6 +22,7 @@ function renderDraftHighlights(highlights) {
     .join('');
   return `
     <div class="draft-highlights">
+      <div class="post-section-label post-section-label-ref">Reference only — not posted</div>
       <div class="draft-highlights-title">Press release highlights</div>
       <ul class="draft-highlights-list">${items}</ul>
     </div>`;
@@ -37,6 +38,8 @@ let rejectionReasons = [];
 let watchlist = [];
 let searchTopics = [];
 let queueData = { drafts: [], counts: { stock: 0, politics: 0 }, hidden_duplicates: 0 };
+let queueFilter = 'all';
+let queueWatchlist = [];
 
 // ── API helpers ──────────────────────────────────────────
 
@@ -100,6 +103,7 @@ function showLogin() {
 function showApp() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
+  bindQueueFilters();
   startRefresh();
   loadCurrentTab();
 }
@@ -382,6 +386,7 @@ async function loadQueue(silent = false) {
       counts: data.counts || { stock: 0, politics: 0 },
       hidden_duplicates: data.hidden_duplicates || 0,
     };
+    if (data.watchlist) queueWatchlist = data.watchlist;
     rejectionReasons = data.rejection_reasons || rejectionReasons;
     if (isQueueTab()) renderLane(currentTab);
     updateBadges();
@@ -390,18 +395,43 @@ async function loadQueue(silent = false) {
   }
 }
 
+function filterDraftsByCategory(drafts, filter) {
+  if (filter === 'earnings') {
+    return drafts.filter((d) => d.category === 'earnings');
+  }
+  if (filter === 'ai') {
+    return drafts.filter((d) => d.category === 'ai');
+  }
+  if (filter === 'macro') {
+    return drafts.filter((d) => d.category === 'macro');
+  }
+  if (filter === 'watchlist') {
+    const wl = new Set((queueWatchlist || []).map((t) => String(t).toUpperCase()));
+    if (!wl.size) return [];
+    return drafts.filter((d) => (d.tickers || []).some((t) => wl.has(String(t).toUpperCase())));
+  }
+  return drafts;
+}
+
 function renderLane(lane) {
-  const drafts = queueData.drafts.filter((d) => d.lane === lane);
+  let drafts = queueData.drafts.filter((d) => d.lane === lane);
+  if (lane === 'stock' && queueFilter !== 'all') {
+    drafts = filterDraftsByCategory(drafts, queueFilter);
+  }
   renderQueue(drafts, lane);
   const sub = document.getElementById('header-subtitle');
   const count = drafts.length;
+  const filterLabel = lane === 'stock' && queueFilter !== 'all'
+    ? ` · ${queueFilter}`
+    : '';
   if (queueData.hidden_duplicates > 0) {
-    sub.textContent = `${count} draft${count === 1 ? '' : 's'} · ${queueData.hidden_duplicates} duplicate${queueData.hidden_duplicates === 1 ? '' : 's'} hidden`;
+    sub.textContent = `${count} draft${count === 1 ? '' : 's'}${filterLabel} · ${queueData.hidden_duplicates} duplicate${queueData.hidden_duplicates === 1 ? '' : 's'} hidden`;
   } else {
     sub.textContent = count
-      ? `${count} draft${count === 1 ? '' : 's'} waiting`
+      ? `${count} draft${count === 1 ? '' : 's'} waiting${filterLabel}`
       : (lane === 'politics' ? 'Geopolitics & policy' : 'Earnings, tickers & markets');
   }
+  updateFilterChips();
 }
 
 function updateBadges() {
@@ -430,19 +460,45 @@ function updateBadges() {
   }
 }
 
+function updateFilterChips() {
+  document.querySelectorAll('#stock-filters .filter-chip').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.filter === queueFilter);
+  });
+}
+
+function bindQueueFilters() {
+  const bar = document.getElementById('stock-filters');
+  if (!bar || bar.dataset.bound) return;
+  bar.dataset.bound = '1';
+  bar.querySelectorAll('.filter-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      queueFilter = btn.dataset.filter || 'all';
+      if (currentTab === 'stock') renderLane('stock');
+    });
+  });
+}
+
 function renderQueue(drafts, lane) {
   const list = document.getElementById(`${lane}-list`);
   const empty = document.getElementById(`${lane}-empty`);
-  const sorted = [...drafts].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
-  if (!sorted.length) {
+  if (!drafts.length) {
     list.innerHTML = '';
     empty.classList.remove('hidden');
     return;
   }
   empty.classList.add('hidden');
-  list.innerHTML = sorted.map((d) => renderDraftCard(d)).join('');
+  const scheduled = drafts.filter((d) => d.status === 'scheduled');
+  const pending = drafts.filter((d) => d.status !== 'scheduled');
+  let html = '';
+  if (scheduled.length) {
+    html += '<div class="queue-section-label">Scheduled</div>';
+    html += scheduled.map((d) => renderDraftCard(d)).join('');
+  }
+  if (pending.length) {
+    if (scheduled.length) html += '<div class="queue-section-label">Queue</div>';
+    html += pending.map((d) => renderDraftCard(d)).join('');
+  }
+  list.innerHTML = html;
   attachCardListeners();
 }
 
@@ -453,9 +509,21 @@ function renderDraftCard(d) {
   const textClass = fmt === 'breaking' ? 'is-breaking' : fmt === 'summary' ? 'is-summary' : '';
   const split = splitDraftText(d.text);
   const tweetText = split.post;
+  const hasHighlights = split.highlights.length > 0;
   const source = d.headline
     ? `<a href="${esc(d.headline.url)}" target="_blank" rel="noopener">${esc(d.headline.source)}</a>`
     : 'Unknown source';
+  const headlineBlock = d.headline?.title
+    ? `<div class="post-headline"><a href="${esc(d.headline.url)}" target="_blank" rel="noopener">${esc(d.headline.title)}</a></div>`
+    : '';
+  const postLabel = hasHighlights
+    ? '<div class="post-section-label">Posts to X</div>'
+    : '';
+  const copyAllBtn = hasHighlights
+    ? `<button type="button" class="btn-icon" data-action="copy-all" data-id="${d.id}" title="Copy post + highlights" aria-label="Copy post and highlights">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+          </button>`
+    : '';
 
   const tags = [
     `<span class="tag tag-fmt-${fmt}">${esc(d.format)}</span>`,
@@ -478,6 +546,7 @@ function renderDraftCard(d) {
   } else {
     body = `
       <div class="post-body">
+        ${postLabel}
         <div class="post-text ${textClass}">${esc(tweetText)}</div>
         ${renderDraftHighlights(split.highlights)}
       </div>
@@ -517,11 +586,15 @@ function renderDraftCard(d) {
   return `
     <article class="post-card" data-id="${d.id}" data-impact="${esc(d.impact)}">
       <div class="post-head">
-        <span class="post-source">${source}${d.is_seed ? ' <span class="seed-badge">Sample — not live news</span>' : ''}${scheduledBadge}</span>
+        <div class="post-head-main">
+          <span class="post-source">${source}${d.is_seed ? ' <span class="seed-badge">Sample — not live news</span>' : ''}${scheduledBadge}</span>
+          ${headlineBlock}
+        </div>
         <div class="post-head-actions">
-          <button type="button" class="btn-icon" data-action="copy" data-id="${d.id}" title="Copy text" aria-label="Copy draft text">
+          <button type="button" class="btn-icon" data-action="copy-post" data-id="${d.id}" title="Copy X post text" aria-label="Copy X post text">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
           </button>
+          ${copyAllBtn}
           <div class="post-age-wrap">
             <span class="post-age ${draftAgeClass}" title="Draft created ${esc(d.age)} ago">
               <span class="post-age-label">Draft</span> ${esc(d.age)}
@@ -543,11 +616,27 @@ function attachCardListeners() {
     ta.addEventListener('input', () => {
       const id = ta.id.replace('edit-', '');
       const counter = document.getElementById(`counter-${id}`);
-      const len = ta.value.length;
-      counter.textContent = `${len}/280`;
-      counter.classList.toggle('over', len > 280 && !ta.value.includes('\n\n'));
+      const tweetLen = splitDraftText(ta.value).post.length;
+      counter.textContent = `${tweetLen}/280`;
+      counter.classList.toggle('over', tweetLen > 280);
     });
   });
+}
+
+async function copyTextToClipboard(text) {
+  if (!text) throw new Error('Nothing to copy');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
 }
 
 async function handleCardAction(e) {
@@ -604,28 +693,24 @@ async function handleCardAction(e) {
       showToast(err.message, 'error');
       btn.disabled = false;
     }
-  } else if (action === 'copy') {
+  } else if (action === 'copy' || action === 'copy-post' || action === 'copy-all') {
     const card = btn.closest('.post-card');
-    const text = card.querySelector('.post-text')?.textContent
+    const draft = queueData.drafts.find((item) => item.id === id);
+    const raw = draft?.text
       || card.querySelector('.edit-box')?.value
+      || card.querySelector('.post-text')?.textContent
       || '';
+    const split = splitDraftText(raw);
+    const text = action === 'copy-all' ? raw.trim() : split.post;
     if (!text) {
       showToast('Nothing to copy', 'error');
       return;
     }
     try {
-      await navigator.clipboard.writeText(text);
-      showToast('Copied to clipboard', 'success');
+      await copyTextToClipboard(text);
+      showToast(action === 'copy-all' ? 'Copied post + highlights' : 'Copied X post text', 'success');
     } catch {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      showToast('Copied to clipboard', 'success');
+      showToast('Copy failed', 'error');
     }
   }
 }
@@ -725,6 +810,52 @@ document.getElementById('rejected-toggle').addEventListener('click', () => {
 
 // ── Settings ─────────────────────────────────────────────
 
+function renderEarningsCalendar(earn) {
+  const panel = document.getElementById('earnings-calendar-panel');
+  if (!panel) return;
+
+  if (!earn || earn.configured === false) {
+    panel.innerHTML = `<p class="row-desc block muted-note">${esc(earn?.hint || 'Set FINNHUB_KEY for earnings calendar and structured drafts')}</p>`;
+    return;
+  }
+
+  const today = earn.today || [];
+  const upcoming = earn.upcoming || [];
+  const parts = [];
+
+  if (earn.reporting_today > 0) {
+    parts.push(`<div class="earnings-cal-heading">Reporting today (${earn.reporting_today})</div>`);
+    parts.push('<ul class="earnings-cal-list">');
+    today.forEach((row) => {
+      parts.push(`<li><span class="earnings-cal-ticker">${esc(row.symbol)}</span> ${esc(row.label || row.status || '')}</li>`);
+    });
+    parts.push('</ul>');
+  }
+
+  if (upcoming.length) {
+    parts.push('<div class="earnings-cal-heading">Upcoming previews</div>');
+    parts.push('<ul class="earnings-cal-list">');
+    upcoming.forEach((row) => {
+      parts.push(
+        `<li><span class="earnings-cal-ticker">${esc(row.symbol)}</span> `
+        + `<span class="earnings-cal-date">${esc(row.date || '')}</span> `
+        + `${esc(row.label || row.hour || 'preview')}</li>`,
+      );
+    });
+    parts.push('</ul>');
+  }
+
+  if (!parts.length) {
+    panel.innerHTML = `<p class="row-desc block muted-note">${esc(earn.hint || 'No watchlist tickers reporting in the next few days')}</p>`;
+    return;
+  }
+
+  if (earn.hint) {
+    parts.push(`<p class="earnings-cal-hint muted-note">${esc(earn.hint)}</p>`);
+  }
+  panel.innerHTML = parts.join('');
+}
+
 async function loadSettings() {
   try {
     const data = await api('/settings');
@@ -776,6 +907,7 @@ async function loadSettings() {
     }
     const err = pipe.last_error ? `<div class="pipeline-error">${esc(pipe.last_error)}</div>` : '';
     const earn = pipe.earnings || {};
+    renderEarningsCalendar(earn);
     let earnLine = '';
     if (earn.configured === false) {
       earnLine = '<div class="status-row"><span>Earnings</span><span class="status-no">Add FINNHUB_KEY</span></div>';
@@ -1081,6 +1213,7 @@ document.querySelectorAll('.pause-btn').forEach((btn) => {
 const REJECT_LABELS = {
   too_vague: 'Too vague',
   too_small: 'Too small / thin',
+  too_opinionated: 'Too opinionated',
   wrong_ticker: 'Wrong ticker',
   bad_hook: 'Weak hook',
   too_long: 'Too long',

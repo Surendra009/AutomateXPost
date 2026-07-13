@@ -257,12 +257,142 @@ body {
 
 .post-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
+}
+
+.post-head-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.post-headline {
+  margin-top: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.post-headline a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.post-headline a:hover {
+  text-decoration: underline;
+}
+
+.post-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--blue);
+  margin-bottom: 8px;
+}
+
+.post-section-label-ref {
+  color: var(--dim);
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+.queue-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  margin: 16px 4px 8px;
+}
+
+.queue-section-label:first-child {
+  margin-top: 0;
+}
+
+.queue-filters {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 4px 12px;
+  margin-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.queue-filters::-webkit-scrollbar {
+  display: none;
+}
+
+.filter-chip {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.filter-chip.active {
+  background: var(--text);
+  border-color: var(--text);
+  color: #fff;
+}
+
+.earnings-calendar-panel {
+  font-size: 14px;
+}
+
+.earnings-cal-heading {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+  margin: 12px 0 8px;
+}
+
+.earnings-cal-heading:first-child {
+  margin-top: 0;
+}
+
+.earnings-cal-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.earnings-cal-list li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  line-height: 1.4;
+}
+
+.earnings-cal-list li:last-child {
+  border-bottom: none;
+}
+
+.earnings-cal-ticker {
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.earnings-cal-date {
+  color: var(--dim);
+  font-size: 12px;
+  margin-right: 6px;
+}
+
+.earnings-cal-hint {
+  margin-top: 10px;
+  font-size: 12px;
 }
 
 .post-head-actions {

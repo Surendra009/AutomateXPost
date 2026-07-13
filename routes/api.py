@@ -219,6 +219,7 @@ def get_queue(request: Request):
         "dedup_mode": get_dedup_mode(),
         "hidden_duplicates": hidden_duplicates,
         "rejection_reasons": list(REJECTION_REASONS),
+        "watchlist": get_setting("watchlist", []),
     }
 
 
