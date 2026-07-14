@@ -1,7 +1,9 @@
 #!/bin/sh
 set -e
 PORT="${PORT:-8000}"
-if command -v python3 >/dev/null 2>&1; then
-  exec python3 -m uvicorn app:app --host 0.0.0.0 --port "$PORT"
+PY="$(command -v python3 2>/dev/null || command -v python)"
+if [ -z "$PY" ]; then
+  echo "python3 not found in PATH" >&2
+  exit 1
 fi
-exec python -m uvicorn app:app --host 0.0.0.0 --port "$PORT"
+exec "$PY" -m uvicorn app:app --host 0.0.0.0 --port "$PORT"
