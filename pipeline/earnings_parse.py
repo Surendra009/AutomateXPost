@@ -714,7 +714,7 @@ def format_earnings_draft(
         closing = f"{ticker} missed estimates this quarter as results came in below consensus."
     elif cleaned_highlights:
         closing = (
-            f"Another quarter showing why {ticker} remains the industry’s benchmark, "
+            f"Another quarter showing why {ticker} remains the industry's benchmark, "
             f"with strong performance across nearly every business line."
         )
     else:
