@@ -22,7 +22,6 @@ from pipeline.earnings_freshness import estimate_earnings_release_utc, is_earnin
 from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.earnings_parse import (
     EarningsFacts,
-    build_earnings_lines,
     format_earnings_draft,
 )
 from pipeline.finnhub_api import finnhub_get, get_finnhub_key
@@ -201,52 +200,37 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
         finnhub_summary=summary,
     )
     facts = enrichment.facts or facts
-    lines = build_earnings_lines(
+    highlights: list[str] = list(enrichment.highlights or [])
+    if not highlights:
+        from pipeline.earnings_parse import extract_earnings_highlights
+
+        highlights = extract_earnings_highlights(
+            " ".join(
+                part
+                for part in (enrichment.news_context, enrichment.article_text, summary)
+                if part
+            ),
+            ticker=symbol,
+            allow_llm=True,
+            html=enrichment.press_html,
+        )
+
+    company_name = None
+    try:
+        from pipeline.earnings_press import get_company_profile
+
+        company_name = (get_company_profile(symbol).get("name") or "").strip() or None
+    except Exception:
+        company_name = None
+
+    draft = format_earnings_draft(
         symbol,
         verb,
         facts,
-        source_text=enrichment.news_context or summary,
-        article_text=enrichment.article_text,
-        allow_llm=True,
-        html=enrichment.press_html,
+        highlights=highlights,
+        year=year if isinstance(year, int) else None,
+        company_name=company_name,
     )
-    if lines:
-        line1, line2, line3, highlights = lines
-        if enrichment.highlights:
-            # Prefer the fuller enrichment list (may include press-only bullets)
-            merged = list(dict.fromkeys(highlights + enrichment.highlights))
-            highlights = merged
-        draft = format_earnings_draft(
-            line1, line2, line3, highlights=highlights, ticker=symbol
-        )
-    else:
-        # Keep fallback useful — never duplicate revenue on lines 2 and 3
-        line1 = f"{symbol} {verb} {q_label}EPS {eps_actual_s} vs {eps_est_s} est"
-        line2 = (
-            f"Revenue {rev_actual_s} vs {rev_est_s} est"
-            if rev_actual_s and rev_est_s
-            else f"{symbol} {verb} {q_label}results"
-        )
-        insight_bits: list[str] = []
-        if enrichment.highlights:
-            insight_bits.extend(enrichment.highlights[:3])
-        if not insight_bits:
-            eps_s = None
-            try:
-                if eps_actual is not None and eps_est not in (None, 0):
-                    eps_s = (float(eps_actual) - float(eps_est)) / abs(float(eps_est)) * 100
-            except (TypeError, ValueError, ZeroDivisionError):
-                eps_s = None
-            if eps_s is not None:
-                insight_bits.append(f"EPS {eps_s:+.0f}% vs est")
-            if enrichment.press_url:
-                insight_bits.append("See release for segment detail")
-            elif not insight_bits:
-                insight_bits.append(f"{symbol} {verb} {q_label}earnings".strip())
-        line3 = insight_bits[0]
-        draft = format_earnings_draft(
-            line1, line2, line3, highlights=insight_bits[1:] or enrichment.highlights, ticker=symbol
-        )
 
     impact = "high" if overall in ("beat", "miss") else "med"
     return title, summary, draft, impact
@@ -400,7 +384,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                     summary=summary,
                     draft_text=draft_text,
                     impact=impact,
-                    fmt="BREAKING",
+                    fmt="SUMMARY",
                     confidence=0.95,
                     chash=chash,
                     date_str=date_str,

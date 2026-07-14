@@ -2,9 +2,13 @@ const HIGHLIGHTS_MARKER = '---\nHighlights:';
 
 function splitDraftText(text) {
   const raw = text || '';
+  // Structured earnings posts are posted in full (Key Highlights included)
+  if (raw.includes('Analyst Expectations vs. Actual')) {
+    return { post: raw.trim(), highlights: [], structured: true };
+  }
   const idx = raw.indexOf(HIGHLIGHTS_MARKER);
   if (idx === -1) {
-    return { post: raw.trim(), highlights: [] };
+    return { post: raw.trim(), highlights: [], structured: false };
   }
   const post = raw.slice(0, idx).trim();
   const bullets = raw
@@ -12,7 +16,7 @@ function splitDraftText(text) {
     .split('\n')
     .map((line) => line.replace(/^[\s•\-*]+/, '').trim())
     .filter(Boolean);
-  return { post, highlights: bullets };
+  return { post, highlights: bullets, structured: false };
 }
 
 function renderDraftHighlights(highlights) {
@@ -541,6 +545,7 @@ function renderDraftCard(d) {
   const split = splitDraftText(d.text);
   const tweetText = split.post;
   const hasHighlights = split.highlights.length > 0;
+  const isStructuredEarnings = !!split.structured;
   const source = d.headline
     ? `<a href="${esc(d.headline.url)}" target="_blank" rel="noopener">${esc(d.headline.source)}</a>`
     : 'Unknown source';
@@ -549,12 +554,18 @@ function renderDraftCard(d) {
     : '';
   const postLabel = hasHighlights
     ? '<div class="post-section-label">Posts to X</div>'
-    : '';
+    : (isStructuredEarnings
+      ? '<div class="post-section-label">Posts to X (thread if over 280)</div>'
+      : '');
   const copyAllBtn = hasHighlights
     ? `<button type="button" class="btn-icon" data-action="copy-all" data-id="${d.id}" title="Copy post + highlights" aria-label="Copy post and highlights">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
           </button>`
     : '';
+
+  const charLabel = isStructuredEarnings && tweetText.length > 280
+    ? `${tweetText.length} chars · thread`
+    : `${tweetText.length}/280`;
 
   const tags = [
     `<span class="tag tag-fmt-${fmt}">${esc(d.format)}</span>`,
@@ -568,7 +579,7 @@ function renderDraftCard(d) {
     body = `
       <div class="post-foot">
         <textarea class="edit-box" id="edit-${d.id}" maxlength="500">${esc(d.text)}</textarea>
-        <div class="char-count" id="counter-${d.id}">${tweetText.length}/280</div>
+        <div class="char-count" id="counter-${d.id}">${charLabel}</div>
         <div class="post-actions">
           <button class="btn btn-approve btn-block" data-action="approve-edit" data-id="${d.id}">Approve edit</button>
           <button class="btn btn-secondary btn-block" data-action="cancel-edit" data-id="${d.id}">Cancel</button>

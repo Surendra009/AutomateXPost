@@ -38,13 +38,12 @@ OPINION_DRAFT_PHRASES = re.compile(
     r"seems? to|appears? to|arguably|clearly|obviously|"
     r"bullish|bearish|overvalued|undervalued|"
     r"bigger story|drove the print|need repricing|backs the|momentum backs|"
-    r"broad-based|skinny top|one-offs?|offset the|underestimated|overestimated|"
+    r"skinny top|one-offs?|offset the|underestimated|overestimated|"
     r"positive sign|negative sign|red flag|green flag|"
     r"i think|we think|in my view|"
     r"who wins|who loses|beneficiar|"
     r"shifts? .{0,30} expectations|shapes? .{0,20} odds|affects? (?:the )?fed|"
     r"repriced|reprice|soft-landing|recession vs|"
-    r"crushed estimates|massive|huge|stunning|surprising|"
     r"worried|nervous|optimis|pessimis|sentiment"
     r")\b",
     re.I,

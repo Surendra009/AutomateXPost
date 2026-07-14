@@ -14,7 +14,7 @@ from pipeline.finnhub_api import finnhub_get, get_finnhub_key, parse_finnhub_tim
 from pipeline.freshness import is_fresh
 from pipeline.noise import is_title_noise
 from pipeline.structured_common import content_hash, save_structured_draft
-from pipeline.earnings_parse import build_earnings_lines, extract_earnings_facts, format_earnings_draft
+from pipeline.earnings_parse import extract_earnings_facts, format_earnings_draft
 from pipeline.draft_quality import draft_quality_reason
 from pipeline.enrich import fetch_article_text
 from pipeline.watchlist_scope import normalized_watchlist
@@ -102,24 +102,41 @@ def _build_draft(
             article = fetch_article_text(url) or ""
             if article:
                 facts = extract_earnings_facts(f"{text} {article[:3000]}")
-        lines = build_earnings_lines(
-            symbol,
-            verb,
-            facts,
-            source_text=text,
-            article_text=article,
-        )
-        if not lines:
+        if not facts.has_numbers():
             return None
-        line1, line2, line3, highlights = lines
+        from pipeline.earnings_parse import extract_earnings_highlights
+        from pipeline.earnings_press import get_company_profile
+
+        highlights = extract_earnings_highlights(
+            f"{text} {article}",
+            ticker=symbol,
+            allow_llm=True,
+        )
+        company_name = None
+        try:
+            company_name = (get_company_profile(symbol).get("name") or "").strip() or None
+        except Exception:
+            company_name = None
+        year = None
+        yoy = re.search(r"\b(20\d{2})\b", text)
+        if yoy:
+            try:
+                year = int(yoy.group(1))
+            except ValueError:
+                year = None
         impact = "high" if verb in ("beat", "missed") else "med"
-        fmt = "BREAKING"
+        fmt = "SUMMARY"
         confidence = 0.9
         category = "earnings"
         draft = format_earnings_draft(
-            line1, line2, line3, highlights=highlights, ticker=symbol
+            symbol,
+            verb,
+            facts,
+            highlights=highlights,
+            year=year,
+            company_name=company_name,
         )
-        return draft, category, impact, fmt, confidence, line1
+        return draft, category, impact, fmt, confidence, f"${symbol} Earnings"
     elif GUIDANCE.search(text):
         guide = GUIDANCE.search(text)
         action = guide.group(0) if guide else "updated guidance"
