@@ -79,10 +79,13 @@ def check_safety_rails(draft: Draft, daily_cap: int, cooldown_minutes: int) -> N
 def _split_thread(text: str, fmt: str) -> list[str]:
     """Split long posts into tweet-sized chunks."""
     text = text.strip()
-    if not ENABLE_THREADS or fmt != "SUMMARY":
+    # Thread long posts (structured earnings SUMMARY, or any over-limit copy)
+    allow_thread = ENABLE_THREADS and (
+        fmt == "SUMMARY" or "Analyst Expectations vs. Actual" in text or len(text) > TWEET_LIMIT
+    )
+    if not allow_thread:
         if len(text) <= TWEET_LIMIT:
             return [text]
-        # Hard truncate single tweet
         return [text[: TWEET_LIMIT - 1] + "…"]
 
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
@@ -101,16 +104,29 @@ def _split_thread(text: str, fmt: str) -> list[str]:
             if len(para) <= TWEET_LIMIT:
                 current = para
             else:
-                words = para.split()
+                # Prefer splitting on bullet lines for earnings posts
+                lines = para.split("\n")
                 chunk = ""
-                for word in words:
-                    test = f"{chunk} {word}".strip()
+                for line in lines:
+                    test = f"{chunk}\n{line}".strip() if chunk else line
                     if len(test) <= TWEET_LIMIT:
                         chunk = test
                     else:
                         if chunk:
                             tweets.append(chunk)
-                        chunk = word
+                        if len(line) <= TWEET_LIMIT:
+                            chunk = line
+                        else:
+                            words = line.split()
+                            chunk = ""
+                            for word in words:
+                                test_w = f"{chunk} {word}".strip()
+                                if len(test_w) <= TWEET_LIMIT:
+                                    chunk = test_w
+                                else:
+                                    if chunk:
+                                        tweets.append(chunk)
+                                    chunk = word
                 current = chunk
     if current:
         tweets.append(current)

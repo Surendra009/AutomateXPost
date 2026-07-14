@@ -535,46 +535,205 @@ def resolve_earnings_highlight(
 
 
 def earnings_tweet_text(text: str) -> str:
-    """Postable X copy — strip reference highlights below the marker."""
-    if EARNINGS_HIGHLIGHTS_MARKER in text:
-        return text.split(EARNINGS_HIGHLIGHTS_MARKER, 1)[0].strip()
-    return text.strip()
+    """Postable X copy. Structured earnings posts are posted in full."""
+    return (text or "").strip()
+
+
+def _earnings_verdict(verb: str, eps_surp: float | None, rev_surp: float | None) -> str:
+    eps = eps_surp if eps_surp is not None else 0.0
+    rev = rev_surp if rev_surp is not None else 0.0
+    if verb == "missed" or (eps < -1 and rev <= 0) or (eps <= 0 and rev < -1):
+        worst = min(eps if eps_surp is not None else 0.0, rev if rev_surp is not None else 0.0)
+        if worst <= -10:
+            return "Wide Miss"
+        return "Miss"
+    if verb == "matched" or (abs(eps) < 1 and abs(rev) < 1):
+        return "In Line"
+    best = max(eps if eps_surp is not None else 0.0, rev if rev_surp is not None else 0.0)
+    if best >= 8:
+        return "Massive Beat"
+    if best >= 3:
+        return "Solid Beat"
+    return "Beat"
+
+
+def _metric_bullet(label: str, actual: str | None, estimate: str | None, surprise: float | None) -> str | None:
+    if not actual or not estimate:
+        return None
+    if surprise is None:
+        return f"• {label}: {actual} vs. {estimate} est."
+    if surprise >= 0:
+        return f"• {label}: {actual} vs. {estimate} est. ✅ (+{surprise:.0f}%)"
+    return f"• {label}: {actual} vs. {estimate} est. ❌ ({surprise:.0f}%)"
+
+
+def _highlight_emoji(text: str) -> str:
+    lower = text.lower()
+    pairs = (
+        (r"net income|gaap|profit", "📈"),
+        (r"underlying eps|eps|per share", "💰"),
+        (r"investment banking|trading|markets|ib fees|advisory|underwriting", "🏦"),
+        (r"guidance|outlook|management|businesses|business line", "📊"),
+        (r"consumer|credit|card|deposit|loan|charge[- ]?off", "💳"),
+        (r"capital|cet1|shareholder|buyback|dividend|return", "💵"),
+        (r"cloud|ai|gpu|data[- ]?center|azure|aws", "🤖"),
+        (r"nii|net interest|revenue|sales|aum|wealth", "📈"),
+    )
+    for pattern, emoji in pairs:
+        if re.search(pattern, lower):
+            return emoji
+    return "📌"
+
+
+def _clean_highlight_for_post(text: str) -> str | None:
+    """Prep a highlight bullet for the structured post (allow press-release phrasing)."""
+    from pipeline.draft_quality import generic_draft_reason
+
+    text = _BULLET_LINE.sub("", (text or "").strip())
+    text = re.sub(r"\s+", " ", text).strip(" \"'")
+    if len(text) < 12:
+        return None
+    # Drop pure EPS/revenue restatements — those live in the Expectations section
+    if re.search(r"^(?:eps|revenue|sales)\b", text, re.I) and re.search(
+        r"\b(?:vs\.?|versus|est\.?|consensus|estimate)\b", text, re.I
+    ):
+        return None
+    gf = generic_draft_reason(text)
+    if gf and ("generic filler" in gf or gf in ("empty", "weak opener")):
+        return None
+    return _trim_highlight(text, max_len=120)
+
+
+def _company_hashtag(company_name: str | None, ticker: str) -> str | None:
+    if not company_name:
+        return None
+    short = re.sub(
+        r"\s+(Inc\.?|Corp\.?|Co\.?|& Co\.?|Corporation|Company|plc|Ltd\.?|N\.?A\.?)\.?.*$",
+        "",
+        company_name,
+        flags=re.I,
+    ).strip()
+    # JPMorgan Chase -> JPMorgan
+    short = short.split()[0] if short else ""
+    short = re.sub(r"[^A-Za-z0-9]", "", short)
+    if not short or short.upper() == ticker.upper():
+        return None
+    return f"#{short}"
+
+
+_BANK_TICKERS = frozenset({
+    "JPM", "BAC", "WFC", "C", "GS", "MS", "USB", "PNC", "TFC", "SCHW", "BK", "STT", "COF",
+})
 
 
 def format_earnings_draft(
-    line1: str,
-    line2: str,
-    line3: str,
+    ticker: str,
+    verb: str,
+    facts: EarningsFacts,
     *,
     highlights: list[str] | None = None,
-    ticker: str | None = None,
+    year: int | None = None,
+    company_name: str | None = None,
 ) -> str:
-    """Postable hook (EPS/rev + commentary) plus optional UI reference bullets.
+    """Structured earnings post matching the queue / X layout users expect."""
+    from pipeline.draft_quality import generic_draft_reason as _generic
 
-    Top segment/bank highlights are promoted into the posted body so X posts
-    are not stuck at 2 thin EPS/revenue lines.
-    """
-    lines = [line1, line2, line3]
-    for h in highlights or []:
-        if not h:
+    ticker = (ticker or "").upper()
+    name = (company_name or "").strip() or ticker
+    short_name = re.sub(
+        r"\s+(Inc\.?|Corp\.?|Co\.?|& Co\.?|Corporation|Company|plc|Ltd\.?).*$",
+        "",
+        name,
+        flags=re.I,
+    ).strip() or name
+
+    q_raw = (facts.quarter or "").upper().replace("QUARTER", "").strip()
+    if q_raw and not q_raw.startswith("Q"):
+        q_raw = f"Q{q_raw}" if q_raw.isdigit() else q_raw
+    period = q_raw
+    if year:
+        period = f"{q_raw} {year}".strip() if q_raw else str(year)
+
+    eps_surp = (
+        _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
+        if facts.eps_actual and facts.eps_estimate
+        else None
+    )
+    rev_surp = (
+        _revenue_surprise_pct(facts.revenue_actual, facts.revenue_estimate)
+        if facts.revenue_actual and facts.revenue_estimate
+        else None
+    )
+    verdict = _earnings_verdict(verb, eps_surp, rev_surp)
+
+    title = f"${ticker}"
+    if period:
+        title += f" {period}"
+    title += f" Earnings: {verdict}"
+
+    sections: list[str] = [title, "", "Analyst Expectations vs. Actual"]
+    eps_line = _metric_bullet("EPS", facts.eps_actual, facts.eps_estimate, eps_surp)
+    rev_line = _metric_bullet("Revenue", facts.revenue_actual, facts.revenue_estimate, rev_surp)
+    if eps_line:
+        sections.append(eps_line)
+    if rev_line:
+        sections.append(rev_line)
+    if not eps_line and not rev_line:
+        if facts.eps_actual:
+            sections.append(f"• EPS: {facts.eps_actual}")
+        if facts.revenue_actual:
+            sections.append(f"• Revenue: {facts.revenue_actual}")
+
+    cleaned_highlights: list[str] = []
+    seen: set[str] = set()
+    for raw in highlights or []:
+        cleaned = _clean_highlight_for_post(raw)
+        if not cleaned:
             continue
-        joined = "\n".join(lines).lower()
-        if h.lower() in joined:
+        # Extra pass: skip only hard generic filler
+        gf = _generic(cleaned)
+        if gf and ("generic filler" in gf or gf == "empty"):
             continue
-        if draft_quality_reason(h):
+        key = re.sub(r"\W+", " ", cleaned.lower()).strip()
+        if key in seen:
             continue
-        lines.append(h)
-        if len(lines) >= 6:
+        seen.add(key)
+        cleaned_highlights.append(cleaned)
+        if len(cleaned_highlights) >= 8:
             break
-    body = "\n".join(lines).strip()
-    if ticker:
-        body = f"{body}\n\n${ticker.upper()}"
-    posted = "\n".join(lines).lower()
-    ref = [h for h in (highlights or []) if h.lower() not in posted][:8]
-    if ref:
-        bullet_lines = "\n".join(f"• {item}" for item in ref)
-        body = f"{body}\n\n{EARNINGS_HIGHLIGHTS_MARKER}\n{bullet_lines}"
-    return body.strip()
+
+    if cleaned_highlights:
+        sections.append("")
+        sections.append("Key Highlights")
+        for item in cleaned_highlights:
+            sections.append(f"• {_highlight_emoji(item)} {item}")
+
+    sections.append("")
+    # Closing — match requested tone for beats; keep misses factual
+    if verb == "missed" or "Miss" in verdict:
+        closing = f"{ticker} missed estimates this quarter as results came in below consensus."
+    elif cleaned_highlights:
+        closing = (
+            f"Another quarter showing why {ticker} remains the industry’s benchmark, "
+            f"with strong performance across nearly every business line."
+        )
+    else:
+        closing = f"Another quarter of strength for {ticker} versus Wall Street estimates."
+    sections.append(closing)
+
+    tags = [f"#{ticker}"]
+    company_tag = _company_hashtag(company_name, ticker)
+    if company_tag:
+        tags.append(company_tag)
+    tags.append("#Earnings")
+    if ticker in _BANK_TICKERS:
+        tags.extend(["#BankStocks", "#Investing"])
+    else:
+        tags.extend(["#Stocks", "#Investing"])
+    sections.append("")
+    sections.append(" ".join(tags))
+
+    return "\n".join(sections).strip()
 
 
 def fetch_earnings_news_context(symbol: str, days_back: int = 2) -> str:

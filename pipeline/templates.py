@@ -18,7 +18,6 @@ from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.draft_quality import draft_quality_reason
 from pipeline.earnings_freshness import earnings_period_is_stale
 from pipeline.earnings_parse import (
-    build_earnings_lines,
     extract_earnings_facts,
     format_earnings_draft,
 )
@@ -181,26 +180,50 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
         facts = enrichment.facts or extract_earnings_facts(
             f"{text} {enrichment.news_context} {enrichment.article_text[:3000]}"
         )
-    lines = build_earnings_lines(
+    else:
+        facts = enrichment.facts or facts
+
+    if not facts.has_numbers():
+        return None
+
+    highlights = list(enrichment.highlights or [])
+    if not highlights:
+        from pipeline.earnings_parse import extract_earnings_highlights
+
+        highlights = extract_earnings_highlights(
+            " ".join(
+                part
+                for part in (enrichment.news_context, enrichment.article_text, text)
+                if part
+            ),
+            ticker=ticker,
+            allow_llm=True,
+            html=enrichment.press_html,
+        )
+
+    company_name = None
+    try:
+        from pipeline.earnings_press import get_company_profile
+
+        company_name = (get_company_profile(ticker).get("name") or "").strip() or None
+    except Exception:
+        company_name = None
+
+    year = None
+    yoy = re.search(r"\b(20\d{2})\b", text)
+    if yoy:
+        try:
+            year = int(yoy.group(1))
+        except ValueError:
+            year = None
+
+    body = format_earnings_draft(
         ticker,
         verb,
         facts,
-        source_text=enrichment.news_context or text,
-        article_text=enrichment.article_text,
-        html=enrichment.press_html,
-    )
-    if not lines:
-        return None
-
-    line1, line2, line3, highlights = lines
-    if enrichment.highlights:
-        highlights = enrichment.highlights
-    body = format_earnings_draft(
-        line1,
-        line2,
-        line3,
         highlights=highlights,
-        ticker=tickers[0] if len(tickers) == 1 else None,
+        year=year,
+        company_name=company_name,
     )
     if len(tickers) > 1:
         body = f"{body}\n\n" + " ".join(f"${t}" for t in tickers)
@@ -208,7 +231,7 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
 
     return TemplateDraft(
         text=body,
-        format="BREAKING",
+        format="SUMMARY",
         tickers=tickers,
         confidence=0.92,
         category="earnings",
