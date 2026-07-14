@@ -69,11 +69,34 @@ _EARNINGS_NEWS = re.compile(
 )
 
 _SEGMENT_GROWTH = re.compile(
-    r"\b(data[- ]?center|cloud|AI|artificial intelligence|services|iPhone|iPad|"
+    r"\b("
+    r"data[- ]?center|cloud|AI|artificial intelligence|services|iPhone|iPad|"
     r"advertising|subscriptions|automotive|gaming|infrastructure|hyperscaler|"
-    r"Azure|AWS|Copilot|GPU|chips?|iPhone|Mac|Windows|Search)\b[^.]{0,80}?"
-    r"(?:up|rose|grew|surged|jumped|climbed|increased|fell|declined|slipped)\s+"
+    r"Azure|AWS|Copilot|GPU|chips?|Mac|Windows|Search|"
+    # Banks / financials
+    r"net interest income|NII|investment banking|IB fees|markets|trading|"
+    r"consumer(?:\s+banking)?|commercial banking|asset(?:\s+and\s+|\s+&\s+)?wealth|"
+    r"wealth management|AUM|assets under management|card(?:s| volume)?|"
+    r"deposits|loans|credit costs?|provision(?:s)?|CET1|capital ratios?|"
+    r"fixed income|equities|advisory|underwriting"
+    r")\b[^.]{0,90}?"
+    r"(?:up|rose|grew|surged|jumped|climbed|increased|fell|declined|slipped|down)\s+"
     r"(?:by\s+)?(\d+\.?\d*)%",
+    re.I,
+)
+
+_BANK_METRIC = re.compile(
+    r"\b("
+    r"net interest income|NII|investment banking(?:\s+fees)?|markets revenue|trading revenue|"
+    r"wealth management|assets under management|AUM|CET1(?:\s+ratio)?|Common Equity Tier 1|"
+    r"credit costs?|provision for credit|net charge[- ]offs?|deposits|loan growth|"
+    r"card sales|consumer banking|commercial banking|IB fees"
+    r")\b[^.]{0,120}?"
+    r"(?:"
+    r"\$[\d,.]+(?:\s*(?:billion|million|trillion|[bBmM]))?"
+    r"|\d+\.?\d*\s*%"
+    r"|up|rose|grew|fell|declined"
+    r")",
     re.I,
 )
 
@@ -85,14 +108,15 @@ _GUIDANCE_CHANGE = re.compile(
 )
 
 _MARGIN_MOVE = re.compile(
-    r"\b(gross|operating|net)\s+margins?\b[^.]{0,50}?"
-    r"\b(expanded|widened|improved|contracted|compressed|fell|declined|narrowed)\b",
+    r"\b(gross|operating|net|net interest)\s+margins?\b[^.]{0,50}?"
+    r"\b(expanded|widened|improved|contracted|compressed|fell|declined|narrowed|"
+    r"rose|increased|was|of)\b",
     re.I,
 )
 
 _DEMAND_SIGNAL = re.compile(
-    r"\b(demand|orders|bookings|backlog|pipeline)\b[^.]{0,60}?"
-    r"\b(strong|weak|robust|soft|record|solid|muted)\b",
+    r"\b(demand|orders|bookings|backlog|pipeline|deal activity|client activity)\b[^.]{0,60}?"
+    r"\b(strong|weak|robust|soft|record|solid|muted|elevated)\b",
     re.I,
 )
 
@@ -108,8 +132,10 @@ _QUOTE_CLAUSE = re.compile(
     re.I,
 )
 
+# Skip pure EPS/consensus restatements — keep segment revenue and bank metrics.
 _HIGHLIGHT_SKIP = re.compile(
-    r"\b(eps|revenue|per share|consensus|estimate|expected|vs\.?|versus)\b",
+    r"\b(per share|consensus|estimate|expected|vs\.?\s*(?:\$|est)|versus (?:\$|est)|"
+    r"eps\s+(?:of\s+)?\$|earnings per share)\b",
     re.I,
 )
 
@@ -194,11 +220,15 @@ def _sentence_highlight_score(sentence: str) -> int:
     score = 0
     lower = sentence.lower()
     if _HIGHLIGHT_SKIP.search(sentence) and not (
-        _SEGMENT_GROWTH.search(sentence) or _GUIDANCE_CHANGE.search(sentence)
+        _SEGMENT_GROWTH.search(sentence)
+        or _GUIDANCE_CHANGE.search(sentence)
+        or _BANK_METRIC.search(sentence)
     ):
         score -= 20
     if _SEGMENT_GROWTH.search(sentence):
         score += 40
+    if _BANK_METRIC.search(sentence):
+        score += 42
     if _GUIDANCE_CHANGE.search(sentence):
         score += 45
     if _MARGIN_MOVE.search(sentence):
@@ -207,11 +237,17 @@ def _sentence_highlight_score(sentence: str) -> int:
         score += 30
     if _QUOTE_CLAUSE.search(sentence):
         score += 25
-    for word in ("cloud", "data center", "ai", "guidance", "margin", "outlook", "demand"):
+    for word in (
+        "cloud", "data center", "ai", "guidance", "margin", "outlook", "demand",
+        "net interest", "nii", "investment banking", "cet1", "trading", "deposits",
+        "provision", "aum", "wealth",
+    ):
         if word in lower:
             score += 8
     if re.search(r"\d+\.?\d*%", sentence):
         score += 5
+    if re.search(r"\$[\d,.]+", sentence):
+        score += 4
     return score
 
 
@@ -227,7 +263,10 @@ def _normalize_bullet(line: str, max_len: int = 110) -> str | None:
     if len(text) < 18:
         return None
     if _HIGHLIGHT_SKIP.search(text) and not (
-        _SEGMENT_GROWTH.search(text) or _GUIDANCE_CHANGE.search(text)
+        _SEGMENT_GROWTH.search(text)
+        or _GUIDANCE_CHANGE.search(text)
+        or _BANK_METRIC.search(text)
+        or _MARGIN_MOVE.search(text)
     ):
         return None
     return _trim_highlight(text, max_len=max_len)
@@ -278,14 +317,23 @@ def extract_bullets_from_plaintext(text: str, max_bullets: int = 12) -> list[str
 
 
 def _dedupe_highlights(items: list[str]) -> list[str]:
+    """Drop near-duplicates; keep the longer, more complete phrasing."""
     out: list[str] = []
-    seen: set[str] = set()
     for item in items:
         key = re.sub(r"\W+", " ", item.lower()).strip()
-        if not key or key in seen:
+        if not key:
             continue
-        seen.add(key)
-        out.append(item)
+        # Prefer longer text when keys substantially overlap
+        replaced = False
+        for i, existing in enumerate(out):
+            ek = re.sub(r"\W+", " ", existing.lower()).strip()
+            if key == ek or key in ek or ek in key:
+                if len(item) > len(existing):
+                    out[i] = item
+                replaced = True
+                break
+        if not replaced:
+            out.append(item)
     return out
 
 
@@ -313,11 +361,15 @@ def extract_earnings_highlights(
 
     blob = re.sub(r"\s+", " ", text or "").strip()
     if blob:
-        seg = _SEGMENT_GROWTH.search(blob)
-        if seg:
+        for seg in _SEGMENT_GROWTH.finditer(blob):
             segment = seg.group(1).strip()
             pct = seg.group(2)
-            candidates.append((92, f"{segment} revenue up {pct}%"))
+            candidates.append((92, f"{segment} up {pct}%"))
+
+        for bank in _BANK_METRIC.finditer(blob):
+            cleaned = _normalize_bullet(bank.group(0))
+            if cleaned and not draft_quality_reason(cleaned):
+                candidates.append((93, cleaned))
 
         for pattern, score in (
             (_GUIDANCE_CHANGE, 90),
@@ -339,7 +391,7 @@ def extract_earnings_highlights(
 
         for sentence in _sentences(blob):
             score = _sentence_highlight_score(sentence)
-            if score >= 30:
+            if score >= 28:
                 cleaned = _normalize_bullet(sentence)
                 if cleaned and not draft_quality_reason(cleaned):
                     candidates.append((score, cleaned))
@@ -371,13 +423,17 @@ def llm_earnings_highlights(source_text: str, ticker: str, max_bullets: int = 10
 
     prompt = (
         f"Ticker: {ticker}\n"
-        f"Press release excerpt:\n{source_text[:5000]}\n\n"
+        f"Press release / article excerpt:\n{source_text[:6500]}\n\n"
         f"Return a JSON array of up to {max_bullets} short bullet strings "
-        "(max 100 chars each). Facts only: segment growth %, margins, guidance "
-        "ranges, product metrics, stated demand. No opinions, predictions, or "
-        "interpretation. Plain strings only, no numbering."
+        "(max 100 chars each). Facts only from the text: segment growth %, "
+        "NII, investment banking, markets/trading, CET1, credit costs, AUM, "
+        "margins, guidance ranges, product metrics, demand. "
+        "No opinions or predictions. Plain strings only, no numbering."
     )
-    system = "You extract factual earnings data points as a JSON string array. No opinions."
+    system = (
+        "You extract factual earnings data points as a JSON string array. "
+        "Prefer segment and bank metrics over repeating EPS/revenue headlines. No opinions."
+    )
     raw = call_llm(
         system,
         prompt,
@@ -493,12 +549,30 @@ def format_earnings_draft(
     highlights: list[str] | None = None,
     ticker: str | None = None,
 ) -> str:
-    """Three-line post hook plus optional bullet reference section."""
-    body = f"{line1}\n{line2}\n{line3}".strip()
+    """Postable hook (EPS/rev + commentary) plus optional UI reference bullets.
+
+    Top segment/bank highlights are promoted into the posted body so X posts
+    are not stuck at 2 thin EPS/revenue lines.
+    """
+    lines = [line1, line2, line3]
+    for h in highlights or []:
+        if not h:
+            continue
+        joined = "\n".join(lines).lower()
+        if h.lower() in joined:
+            continue
+        if draft_quality_reason(h):
+            continue
+        lines.append(h)
+        if len(lines) >= 6:
+            break
+    body = "\n".join(lines).strip()
     if ticker:
         body = f"{body}\n\n${ticker.upper()}"
-    if highlights:
-        bullet_lines = "\n".join(f"• {item}" for item in highlights[:10])
+    posted = "\n".join(lines).lower()
+    ref = [h for h in (highlights or []) if h.lower() not in posted][:8]
+    if ref:
+        bullet_lines = "\n".join(f"• {item}" for item in ref)
         body = f"{body}\n\n{EARNINGS_HIGHLIGHTS_MARKER}\n{bullet_lines}"
     return body.strip()
 
@@ -627,7 +701,7 @@ def _revenue_surprise_pct(actual: str, estimate: str) -> float | None:
 
 
 def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str | None:
-    """Company-specific line 3 — numeric only, no generic filler."""
+    """Company-specific line — surprise % when available (works for modest bank beats)."""
     eps_surp = None
     if facts.eps_actual and facts.eps_estimate:
         eps_surp = _eps_surprise_pct(facts.eps_actual, facts.eps_estimate)
@@ -644,25 +718,27 @@ def build_earnings_insight(ticker: str, verb: str, facts: EarningsFacts) -> str 
                 return f"Revenue beat {rev_surp:.0f}% and EPS beat {eps_surp:.0f}%"
             if rev_surp < -1:
                 return f"EPS beat {eps_surp:.0f}% but revenue missed by {abs(rev_surp):.0f}%"
-        if eps_surp is not None and eps_surp >= 80:
+            if abs(eps_surp) >= 1 or abs(rev_surp) >= 1:
+                return f"EPS {eps_surp:+.0f}% and revenue {rev_surp:+.0f}% vs est"
+        if eps_surp is not None and abs(eps_surp) >= 1:
             return f"EPS beat consensus by {eps_surp:.0f}%"
-        if eps_surp is not None and eps_surp >= 20:
-            return f"EPS beat consensus by {eps_surp:.0f}%"
-        if rev_surp is not None and rev_surp >= 8:
+        if rev_surp is not None and rev_surp >= 1:
             return f"Revenue beat consensus by {rev_surp:.0f}%"
         if facts.yoy_pct:
             return f"Revenue up {facts.yoy_pct}% YoY"
         return None
 
     if verb == "missed":
-        if eps_surp is not None and rev_surp is not None and rev_surp < -2:
-            return f"EPS missed {abs(eps_surp):.0f}% and revenue missed {abs(rev_surp):.0f}%"
-        if eps_surp is not None and eps_surp <= -15:
+        if eps_surp is not None and rev_surp is not None:
+            return f"EPS {eps_surp:+.0f}% and revenue {rev_surp:+.0f}% vs est"
+        if eps_surp is not None:
             return f"EPS {abs(eps_surp):.0f}% below consensus"
         if rev_surp is not None and rev_surp < 0:
             return f"Revenue missed by {abs(rev_surp):.0f}% vs est"
         return None
 
+    if eps_surp is not None and rev_surp is not None:
+        return f"EPS {eps_surp:+.0f}% and revenue {rev_surp:+.0f}% vs est"
     if facts.yoy_pct:
         return f"Revenue growth +{facts.yoy_pct}% YoY"
     return None
@@ -748,11 +824,12 @@ def build_earnings_lines(
         break
 
     if not line3:
-        if facts.revenue_actual and "revenue" not in line1.lower() and "revenue" not in line2.lower():
-            line3 = f"Revenue {facts.revenue_actual}"
-        elif facts.eps_actual and "eps" not in line1.lower():
-            line3 = f"EPS {facts.eps_actual}"
+        if insight and insight.lower() not in line1.lower() and insight.lower() not in line2.lower():
+            line3 = insight
+        elif facts.yoy_pct and f"{facts.yoy_pct}%" not in line2:
+            line3 = f"Revenue up {facts.yoy_pct}% YoY"
         else:
-            return None
+            # Never duplicate line2 revenue/EPS — always return a third distinct line
+            line3 = f"{ticker} {verb} {q}results".strip()
 
     return line1, line2, line3, highlights

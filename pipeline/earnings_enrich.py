@@ -205,7 +205,8 @@ def enrich_earnings_context(
         queries = [
             f'"{symbol}" {q_label} earnings EPS revenue beat miss {year_s}'.strip(),
             f'"{symbol}" earnings results segment guidance outlook',
-        ][:MAX_EARNINGS_WEB_QUERIES]
+            f'"{symbol}" {q_label} "net interest income" OR "investment banking" OR CET1 OR "markets revenue"'.strip(),
+        ][: max(MAX_EARNINGS_WEB_QUERIES, 3)]
         seen_urls: set[str] = set()
         for query in queries:
             if not _time_left():
@@ -214,6 +215,7 @@ def enrich_earnings_context(
                 query,
                 source_label="Web Search · earnings verify",
                 limit=MAX_WEB_RESULTS_PER_QUERY,
+                recency="7d",
             )
             for item in batch:
                 title = (item.get("title") or "").strip()
