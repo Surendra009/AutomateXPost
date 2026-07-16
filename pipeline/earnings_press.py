@@ -55,6 +55,7 @@ KNOWN_IR_PAGES: dict[str, str] = {
     "META": "https://investor.atmeta.com",
     "NVDA": "https://investor.nvidia.com",
     "TSLA": "https://ir.tesla.com",
+    "NFLX": "https://ir.netflix.net",
 }
 
 
@@ -122,6 +123,14 @@ def _quarter_label(quarter: int | None) -> str:
 
 def _matches_earnings_release(title: str, quarter: int | None, year: int | None) -> bool:
     if not _EARNINGS_PRESS_TITLE.search(title):
+        return False
+    # Reject titles that name a different quarter/year than the print we're drafting
+    title_q = re.search(r"\bQ([1-4])\b", title, re.I)
+    if quarter and title_q and int(title_q.group(1)) != int(quarter):
+        return False
+    title_years = [int(y) for y in re.findall(r"\b(20\d{2})\b", title)]
+    if year and title_years and int(year) not in title_years:
+        # Allow titles with no conflicting year; reject explicit wrong years
         return False
     return True
 

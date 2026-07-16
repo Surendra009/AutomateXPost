@@ -18,7 +18,13 @@ from config import (
 from pipeline.dedup import was_recently_drafted
 from pipeline.draft_budget import DraftBudget
 from pipeline.earnings_dedup import earnings_ticker_blocked, expire_earnings_previews_for_ticker
-from pipeline.earnings_freshness import estimate_earnings_release_utc, is_earnings_fresh, earnings_period_is_stale, is_current_reporting_period
+from pipeline.earnings_freshness import (
+    coerce_quarter_year,
+    estimate_earnings_release_utc,
+    is_earnings_fresh,
+    earnings_period_is_stale,
+    is_current_reporting_period,
+)
 from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.earnings_parse import (
     EarningsFacts,
@@ -128,17 +134,31 @@ def _build_preview(event: dict[str, Any]) -> tuple[str, str, str] | None:
     if not est_line:
         return None
 
-    q_label = f"Q{quarter} " if quarter else ""
+    quarter, year = coerce_quarter_year(quarter, year)
+    period = ""
+    if quarter:
+        period = f"Q{quarter}"
+        if year:
+            period = f"{period} {year}"
     title = f"{symbol} reports {timing} — {est_line}"
     summary = (
-        f"{symbol} {q_label}{year or ''} earnings preview ({hour_tag or timing}). "
+        f"{symbol} {period} earnings preview ({hour_tag or timing}). "
         f"Estimate: {est_line}."
     ).strip()
 
-    line1 = f"{symbol} reports {hour_tag} today" if hour_tag else f"{symbol} reports {timing} today"
-    line2 = est_line
-    line3 = f"Consensus {est_line}" if est_line else f"{symbol} earnings today"
-    draft = f"{line1}\n{line2}\n{line3}\n\n${symbol}"
+    # Structured preview — clearly labeled so it isn't mistaken for results
+    head = f"${symbol}"
+    if period:
+        head += f" {period}"
+    head += " Earnings Preview"
+    when = hour_tag or timing
+    draft = (
+        f"{head}\n\n"
+        f"Reports {when}\n"
+        f"• Consensus: {est_line}\n\n"
+        f"Waiting on the print — this is a preview, not results.\n\n"
+        f"#{symbol} #Earnings"
+    )
     return title, summary, draft
 
 
@@ -158,8 +178,7 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
     if not eps_word and not rev_word:
         return None
 
-    quarter = event.get("quarter")
-    year = event.get("year")
+    quarter, year = coerce_quarter_year(event.get("quarter"), event.get("year"))
     hour = _hour_short(event.get("hour")) or _hour_label(event.get("hour"))
     q_label = f"Q{quarter} " if quarter else ""
 
@@ -200,6 +219,8 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
         finnhub_summary=summary,
     )
     facts = enrichment.facts or facts
+    if not facts.quarter and quarter:
+        facts.quarter = f"Q{quarter}"
     highlights: list[str] = list(enrichment.highlights or [])
     if not highlights:
         from pipeline.earnings_parse import extract_earnings_highlights
@@ -228,7 +249,7 @@ def _build_results(event: dict[str, Any]) -> tuple[str, str, str, str] | None:
         verb,
         facts,
         highlights=highlights,
-        year=year if isinstance(year, int) else None,
+        year=year,
         company_name=company_name,
     )
 
@@ -309,10 +330,7 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
             continue
 
         date_str = event.get("date") or today.isoformat()
-        quarter_raw = event.get("quarter")
-        year_raw = event.get("year")
-        quarter = int(quarter_raw) if quarter_raw not in (None, "", 0) else None
-        year = int(year_raw) if year_raw not in (None, "", 0) else None
+        quarter, year = coerce_quarter_year(event.get("quarter"), event.get("year"))
 
         try:
             event_date = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -333,12 +351,22 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                 logger.debug("Skipping duplicate earnings result for %s", symbol)
                 continue
 
-            if not is_current_reporting_period(quarter, year, as_of=event_date):
-                logger.debug(
-                    "Skipping prior-quarter earnings result %s Q%s %s (event %s)",
+            # Gate against today's season — not the Finnhub event_date
+            if quarter and year:
+                if not is_current_reporting_period(quarter, year, as_of=today, require_period=True):
+                    logger.info(
+                        "Skipping prior-quarter earnings result %s Q%s %s (event %s)",
+                        symbol,
+                        quarter,
+                        year,
+                        date_str,
+                    )
+                    continue
+            elif event_date < today - timedelta(days=1):
+                # No Q/Y and not a fresh calendar date → skip (avoids old Finnhub rows)
+                logger.info(
+                    "Skipping earnings result %s %s with missing quarter/year",
                     symbol,
-                    quarter,
-                    year,
                     date_str,
                 )
                 continue
@@ -360,8 +388,13 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
                 continue
             title, summary, draft_text, impact = built
 
-            if earnings_period_is_stale(f"{title} {summary}", quarter=quarter, year=year, as_of=event_date):
-                logger.debug("Skipping stale-quarter earnings copy for %s", symbol)
+            if earnings_period_is_stale(
+                f"{title} {summary} {draft_text}",
+                quarter=quarter,
+                year=year,
+                as_of=today,
+            ):
+                logger.info("Skipping stale-quarter earnings copy for %s", symbol)
                 continue
 
             if not has_watchlist:
@@ -410,13 +443,16 @@ def process_earnings(budget: DraftBudget | None = None) -> tuple[int, int]:
         if earnings_ticker_blocked(symbol):
             continue
 
-        if not is_current_reporting_period(quarter, year, as_of=event_date):
-            logger.debug(
-                "Skipping prior-quarter earnings preview %s Q%s %s",
-                symbol,
-                quarter,
-                year,
-            )
+        if quarter and year:
+            if not is_current_reporting_period(quarter, year, as_of=today, require_period=True):
+                logger.info(
+                    "Skipping prior-quarter earnings preview %s Q%s %s",
+                    symbol,
+                    quarter,
+                    year,
+                )
+                continue
+        elif event_date < today:
             continue
 
         built = _build_preview(event)

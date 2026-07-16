@@ -125,11 +125,13 @@ def get_earnings_snapshot(
         except ValueError:
             continue
 
-        quarter_raw = event.get("quarter")
-        year_raw = event.get("year")
-        quarter = int(quarter_raw) if quarter_raw not in (None, "", 0) else None
-        year = int(year_raw) if year_raw not in (None, "", 0) else None
-        if not is_current_reporting_period(quarter, year, as_of=event_date):
+        from pipeline.earnings_freshness import coerce_quarter_year
+
+        quarter, year = coerce_quarter_year(event.get("quarter"), event.get("year"))
+        if quarter and year:
+            if not is_current_reporting_period(quarter, year, as_of=today, require_period=True):
+                continue
+        elif event_date < today - timedelta(days=1):
             continue
 
         if _has_actual(event):

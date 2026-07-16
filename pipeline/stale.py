@@ -52,12 +52,13 @@ def expire_stale_drafts() -> int:
                 expired += 1
                 continue
 
-            if draft.category == "earnings" and headline:
-                text = f"{headline.title} {headline.summary or ''}"
+            if draft.category == "earnings":
+                text = f"{headline.title if headline else ''} {headline.summary if headline else ''} {draft.text or ''}"
                 if earnings_period_is_stale(text):
                     draft.status = "stale"
                     session.add(draft)
                     expired += 1
+                    continue
         session.commit()
 
     if expired:

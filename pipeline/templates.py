@@ -154,6 +154,8 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
     text = f"{headline.title} {headline.summary}"
     if classification.get("category") != "earnings" and not EARNINGS_CONTEXT.search(text):
         return None
+    from pipeline.earnings_freshness import parse_quarter_year_from_text
+
     if earnings_period_is_stale(text):
         return None
     bm = BEAT_MISS.search(headline.title)
@@ -169,22 +171,28 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
     if earnings_ticker_blocked(ticker):
         return None
     facts = extract_earnings_facts(text)
+    parsed_q, parsed_y = parse_quarter_year_from_text(text)
     enrichment = enrich_earnings_context(
         ticker,
+        quarter=parsed_q,
+        year=parsed_y,
         finnhub_facts=facts,
         finnhub_summary=text,
         headline_url=headline.url or "",
         skip_web_search=False,
     )
+    combined = f"{text} {enrichment.news_context} {enrichment.article_text[:3000]}"
+    if earnings_period_is_stale(combined, quarter=parsed_q, year=parsed_y):
+        return None
     if enrichment.news_context or enrichment.article_text:
-        facts = enrichment.facts or extract_earnings_facts(
-            f"{text} {enrichment.news_context} {enrichment.article_text[:3000]}"
-        )
+        facts = enrichment.facts or extract_earnings_facts(combined)
     else:
         facts = enrichment.facts or facts
 
     if not facts.has_numbers():
         return None
+    if parsed_q and not facts.quarter:
+        facts.quarter = f"Q{parsed_q}"
 
     highlights = list(enrichment.highlights or [])
     if not highlights:
@@ -209,20 +217,12 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
     except Exception:
         company_name = None
 
-    year = None
-    yoy = re.search(r"\b(20\d{2})\b", text)
-    if yoy:
-        try:
-            year = int(yoy.group(1))
-        except ValueError:
-            year = None
-
     body = format_earnings_draft(
         ticker,
         verb,
         facts,
         highlights=highlights,
-        year=year,
+        year=parsed_y,
         company_name=company_name,
     )
     if len(tickers) > 1:
