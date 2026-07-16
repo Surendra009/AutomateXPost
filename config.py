@@ -10,7 +10,7 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-APP_BUILD = os.getenv("APP_BUILD", "79")
+APP_BUILD = os.getenv("APP_BUILD", "80")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
@@ -91,7 +91,7 @@ MIN_AI_RELEVANCE_SCORE = 0.72  # slightly lower bar for major AI product news
 STALE_DRAFT_HOURS = 8  # pending drafts removed from queue after this
 EARNINGS_STALE_DRAFT_HOURS = 2  # earnings drafts expire faster — post within ~2h of release
 MAX_NEWS_AGE_HOURS = 4  # ignore headlines published before this window
-MAX_EARNINGS_AGE_HOURS = 2  # skip/post-block earnings results older than this
+MAX_EARNINGS_AGE_HOURS = 8  # allow AMC prints + Finnhub delay (was 2 — too aggressive)
 EARNINGS_WINDOW_END_HOUR = 20  # faster polling until 8pm ET for AMC results
 MIN_SUMMARY_CHARS_FOR_SKIP_FETCH = 100  # skip full article fetch when RSS summary is enough
 ARTICLE_FETCH_CATEGORIES = frozenset({"earnings", "macro", "ai", "regulatory", "ipo"})

@@ -95,20 +95,32 @@ def _build_draft(
     bm = BEAT_MISS.search(headline)
 
     if bm and EARNINGS_CONTEXT.search(text):
-        verb = _beat_miss_word(bm)
-        article = ""
-        facts = extract_earnings_facts(text)
-        if url:
-            article = fetch_article_text(url) or ""
-            if article:
-                facts = extract_earnings_facts(f"{text} {article[:3000]}")
-        if not facts.has_numbers():
-            return None
+        from pipeline.earnings_freshness import (
+            earnings_period_is_stale,
+            parse_quarter_year_from_text,
+        )
         from pipeline.earnings_parse import extract_earnings_highlights
         from pipeline.earnings_press import get_company_profile
 
+        verb = _beat_miss_word(bm)
+        article = ""
+        if url:
+            article = fetch_article_text(url) or ""
+        combined = f"{text} {article[:3000]}".strip()
+        if earnings_period_is_stale(combined):
+            logger.info("Skipping prior-period company-news earnings for %s: %s", symbol, headline[:80])
+            return None
+
+        facts = extract_earnings_facts(combined if article else text)
+        if not facts.has_numbers():
+            return None
+
+        parsed_q, parsed_y = parse_quarter_year_from_text(combined)
+        if parsed_q and not facts.quarter:
+            facts.quarter = f"Q{parsed_q}"
+
         highlights = extract_earnings_highlights(
-            f"{text} {article}",
+            combined,
             ticker=symbol,
             allow_llm=True,
         )
@@ -117,13 +129,6 @@ def _build_draft(
             company_name = (get_company_profile(symbol).get("name") or "").strip() or None
         except Exception:
             company_name = None
-        year = None
-        yoy = re.search(r"\b(20\d{2})\b", text)
-        if yoy:
-            try:
-                year = int(yoy.group(1))
-            except ValueError:
-                year = None
         impact = "high" if verb in ("beat", "missed") else "med"
         fmt = "SUMMARY"
         confidence = 0.9
@@ -133,7 +138,7 @@ def _build_draft(
             verb,
             facts,
             highlights=highlights,
-            year=year,
+            year=parsed_y,
             company_name=company_name,
         )
         return draft, category, impact, fmt, confidence, f"${symbol} Earnings"

@@ -573,6 +573,7 @@ def _highlight_emoji(text: str) -> str:
         (r"net income|gaap|profit", "📈"),
         (r"underlying eps|eps|per share", "💰"),
         (r"investment banking|trading|markets|ib fees|advisory|underwriting", "🏦"),
+        (r"membership|subscriber|streaming|advertising|content", "📺"),
         (r"guidance|outlook|management|businesses|business line", "📊"),
         (r"consumer|credit|card|deposit|loan|charge[- ]?off", "💳"),
         (r"capital|cet1|shareholder|buyback|dividend|return", "💵"),
