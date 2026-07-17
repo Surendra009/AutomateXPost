@@ -11,7 +11,7 @@ from database import get_session
 from models import Draft, Headline
 from pipeline.dedup import story_has_active_draft, title_recently_ingested, was_recently_drafted
 from pipeline.draft_budget import DraftBudget
-from pipeline.earnings_dedup import earnings_ticker_blocked
+from pipeline.earnings_dedup import earnings_ticker_blocked, primary_ticker
 from pipeline.story_key import title_fingerprint
 
 
@@ -52,7 +52,7 @@ def save_structured_draft(
         return False
     if was_recently_drafted(title, source):
         return False
-    if category == "earnings" and earnings_ticker_blocked(tickers):
+    if category == "earnings" and earnings_ticker_blocked(primary_ticker(tickers) or tickers):
         return False
     if story_has_active_draft(title) or title_recently_ingested(title):
         return False

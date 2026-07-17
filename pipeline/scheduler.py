@@ -10,6 +10,8 @@ from config import (
     MAX_DRAFTS_PER_CYCLE,
     MAX_HEADLINES_PER_CYCLE,
     PIPELINE_INTERVAL_SECONDS,
+    PIPELINE_V2_DRY_RUN,
+    PIPELINE_V2_ENABLED,
     PREMARKET_START_HOUR,
     SCHEDULED_POST_CHECK_SECONDS,
 )
@@ -93,6 +95,7 @@ def get_pipeline_status(*, lightweight: bool = False) -> dict:
         "last_skipped_stale": get_setting("pipeline_last_skipped_stale", 0),
         "last_skipped_dup": get_setting("pipeline_last_skipped_dup", 0),
         "last_ingest_by_source": ingest_by_source,
+        "pipeline_v2": get_setting("pipeline_v2_last_report", {"ran": False}),
         "schedule": sched,
     }
     if lightweight:
@@ -281,6 +284,26 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                 if company_ingested:
                     ingest_count += company_ingested
                     ingest_by_source["Finnhub Company"] = company_ingested
+
+                # Claim-centric v2 — shared budget; queues when PIPELINE_V2_DRY_RUN=false
+                try:
+                    from pipeline.v2 import run_v2_cycle
+                    from pipeline.v2.cycle import report_for_status
+
+                    v2_report = run_v2_cycle(
+                        enabled=PIPELINE_V2_ENABLED,
+                        dry_run=PIPELINE_V2_DRY_RUN,
+                        budget=budget,
+                    )
+                    set_setting("pipeline_v2_last_report", report_for_status(v2_report))
+                    if v2_report.drafted:
+                        ingest_by_source["Pipeline v2"] = v2_report.drafted
+                except Exception as v2_exc:
+                    logger.warning("pipeline v2 cycle failed (legacy continues): %s", v2_exc)
+                    set_setting(
+                        "pipeline_v2_last_report",
+                        {"ran": False, "enabled": PIPELINE_V2_ENABLED, "error": str(v2_exc)[:200]},
+                    )
 
                 headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
                 headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
