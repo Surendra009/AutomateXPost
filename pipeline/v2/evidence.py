@@ -125,7 +125,66 @@ def _evidence_earnings(intent: Intent) -> EvidencePack:
     items.extend(_search_items(intent, source_label=f"v2 · earnings · {symbol}"))
     items = _dedupe_items(items)
     _enrich_bodies(items, limit=_MAX_ARTICLE_FETCHES_PER_INTENT)
+    return _assess_earnings(intent, items)
 
+
+def _evidence_macro_fed(intent: Intent) -> EvidencePack:
+    items: list[EvidenceItem] = []
+    meta = intent.metadata or {}
+    status = (meta.get("status") or "").lower()
+    label = intent.label or intent.kind
+
+    calendar_item = _calendar_macro_item(intent)
+    if calendar_item:
+        items.append(calendar_item)
+
+    items.extend(_search_items(intent, source_label=f"v2 · {intent.kind} · {label}"))
+    items = _dedupe_items(items)
+    _enrich_bodies(items, limit=_MAX_ARTICLE_FETCHES_PER_INTENT)
+    return _assess_macro_fed(intent, items)
+
+
+def fetch_followup_items(intent: Intent, queries: list[str]) -> list[EvidenceItem]:
+    """Run extra search queries + light body enrich for research follow-ups."""
+    if not queries:
+        return []
+    prior = list(intent.queries or [])
+    intent.queries = list(queries)[:_MAX_QUERIES_PER_INTENT]
+    try:
+        items = _search_items(intent, source_label=f"v2 · research · {intent.label or intent.kind}")
+        _enrich_bodies(items, limit=1)
+        for item in items:
+            item.metadata["kind"] = "research"
+        return items
+    finally:
+        intent.queries = prior
+
+
+def reassess_pack(intent: Intent, pack: EvidencePack) -> EvidencePack:
+    """Recompute gaps / meets_minimum after research merges new items."""
+    items = _dedupe_items(list(pack.items))
+    if intent.kind == "earnings_print":
+        assessed = _assess_earnings(intent, items)
+    elif intent.kind in ("macro_print", "fed_decision", "fed_speak", "macro_reaction"):
+        assessed = _assess_macro_fed(intent, items)
+    else:
+        assessed = EvidencePack(
+            intent_id=intent.id,
+            items=items,
+            gaps=["unsupported_kind"],
+            meets_minimum=False,
+            notes=f"No assessor for kind={intent.kind}",
+        )
+    pack.items = assessed.items
+    pack.gaps = assessed.gaps
+    pack.meets_minimum = assessed.meets_minimum
+    pack.notes = assessed.notes
+    return pack
+
+
+def _assess_earnings(intent: Intent, items: list[EvidenceItem]) -> EvidencePack:
+    meta = intent.metadata or {}
+    status = (meta.get("status") or "").lower()
     gaps: list[str] = []
     if status == "preview":
         gaps.append("preview_waiting_for_print")
@@ -148,14 +207,12 @@ def _evidence_earnings(intent: Intent) -> EvidencePack:
         _has_body(items, _MIN_BODY_CHARS) or _has_tier(items, max_tier=2)
     ):
         meets = True
-        # Body still preferred for rich drafts
         gaps = [g for g in gaps if g != "need_numbers"]
         if _has_body(items, _MIN_BODY_CHARS):
             gaps = [g for g in gaps if g not in ("need_body", "need_primary_or_wire")]
         notes = "Calendar numbers + supporting source"
     elif _has_body(items, _MIN_BODY_CHARS) and _has_numeric_body(items):
         meets = True
-        gaps = [g for g in gaps if g in ("need_period",)]  # keep period gap only if any
         gaps = []
         notes = "Primary/wire body with numbers"
     else:
@@ -170,27 +227,15 @@ def _evidence_earnings(intent: Intent) -> EvidencePack:
     )
 
 
-def _evidence_macro_fed(intent: Intent) -> EvidencePack:
-    items: list[EvidenceItem] = []
+def _assess_macro_fed(intent: Intent, items: list[EvidenceItem]) -> EvidencePack:
     meta = intent.metadata or {}
     status = (meta.get("status") or "").lower()
-    label = intent.label or intent.kind
-
-    calendar_item = _calendar_macro_item(intent)
-    if calendar_item:
-        items.append(calendar_item)
-
-    items.extend(_search_items(intent, source_label=f"v2 · {intent.kind} · {label}"))
-    items = _dedupe_items(items)
-    _enrich_bodies(items, limit=_MAX_ARTICLE_FETCHES_PER_INTENT)
-
     gaps: list[str] = []
     if status == "preview":
         gaps.append("preview_waiting_for_print")
 
     relevant = [i for i in items if _title_relevant_macro_fed(i.title, intent)]
     if not relevant and items:
-        # Keep items but flag relevance gap
         gaps.append("need_relevant_headline")
 
     meets = False
@@ -215,7 +260,6 @@ def _evidence_macro_fed(intent: Intent) -> EvidencePack:
                 gaps.append("need_body")
             notes = "Macro print + news confirmation"
         else:
-            # Number alone is not enough for a rich post — wait for a source
             gaps.append("need_news_confirmation")
             notes = "Have calendar print, awaiting news confirmation"
     elif _has_tier(relevant, max_tier=2) or (

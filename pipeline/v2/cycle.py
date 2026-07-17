@@ -1,8 +1,7 @@
 """Orchestrate one v2 cycle: Intent → Evidence → Verify → Research → Write.
 
-Runs alongside the legacy pipeline. Step 2 fetches evidence packs and
-enforces minimum bars; Step 3 scout LLM keep/drop Claims. Write remains
-dry-run (no drafts yet).
+Parallel to the legacy pipeline. Steps 0–5: board, evidence, scout, research,
+and claim-based write (dry_run by default — previews only).
 """
 
 from __future__ import annotations
@@ -58,8 +57,21 @@ def run_v2_cycle(*, enabled: bool = True, dry_run: bool = True) -> CycleReport:
             )
 
         claims = verify_packs(intents, packs)
-        claims, packs, researched = research_gaps(claims, packs)
+        claims, packs, researched = research_gaps(intents, claims, packs)
         report.researched = researched
+        packs_by_id = {pack.intent_id: pack for pack in packs}
+        report.packs_ready = sum(1 for pack in packs if pack.meets_minimum)
+
+        # Refresh summary gaps after research
+        for summary in report.intent_summaries:
+            pack = packs_by_id.get(summary["id"])
+            if not pack:
+                continue
+            summary["meets_minimum"] = pack.meets_minimum
+            summary["gaps"] = list(pack.gaps)
+            summary["evidence_count"] = len(pack.items)
+            summary["notes"] = (pack.notes or "")[:160]
+
         report.claims_keep = sum(1 for c in claims if c.status == "keep")
         report.claims_drop = sum(1 for c in claims if c.status == "drop")
         report.claims_waiting = sum(1 for c in claims if c.status == "waiting")
@@ -75,7 +87,14 @@ def run_v2_cycle(*, enabled: bool = True, dry_run: bool = True) -> CycleReport:
             if claim.assertion:
                 summary["assertion"] = claim.assertion[:160]
 
-        report.drafted = write_from_claims(claims, dry_run=dry_run)
+        drafted, previews = write_from_claims(
+            claims,
+            intents=intents,
+            packs=packs,
+            dry_run=dry_run,
+        )
+        report.drafted = drafted
+        report.draft_previews = previews
     except Exception as exc:
         logger.exception("v2 cycle failed: %s", exc)
         report.errors.append(str(exc)[:240])
@@ -83,7 +102,7 @@ def run_v2_cycle(*, enabled: bool = True, dry_run: bool = True) -> CycleReport:
     report.duration_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
         "v2 cycle done: intents=%d packs_ready=%d keep=%d drop=%d waiting=%d "
-        "researched=%d drafted=%d dry_run=%s ms=%d",
+        "researched=%d drafted=%d previews=%d dry_run=%s ms=%d",
         report.intents,
         report.packs_ready,
         report.claims_keep,
@@ -91,6 +110,7 @@ def run_v2_cycle(*, enabled: bool = True, dry_run: bool = True) -> CycleReport:
         report.claims_waiting,
         report.researched,
         report.drafted,
+        len(report.draft_previews),
         report.dry_run,
         report.duration_ms,
     )
