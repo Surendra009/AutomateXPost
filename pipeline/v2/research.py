@@ -171,6 +171,16 @@ def _deterministic_queries(intent: Intent, pack: EvidencePack) -> list[str]:
     elif intent.kind in ("fed_decision", "fed_speak"):
         out.append('FOMC OR Powell OR "Federal Reserve" (statement OR speech OR decision) when:1d')
         out.append('"Federal Reserve" rates (inflation OR policy) when:1d')
+    elif intent.kind == "company_material":
+        symbol = intent.tickers[0] if intent.tickers else label
+        out.append(f'"{symbol}" (merger OR acquisition OR guidance OR CEO) when:1d')
+        out.append(f'"{symbol}" stock news -opinion when:1d')
+    elif intent.kind == "ai_catalyst":
+        out.append(f"{label} (model OR launch OR release OR partnership) when:1d")
+        out.append("(OpenAI OR Anthropic OR Nvidia OR Google) AI (launch OR model) when:1d")
+    elif intent.kind == "politics_policy":
+        out.append(f"{label} (tariff OR sanction OR bill OR ban) markets when:1d")
+        out.append("(White House OR Congress) (trade OR tariff) stocks when:1d")
     else:
         out.append(f'"{label}" (beats OR misses OR rises OR falls) when:1d')
         out.append(f'"{label}" economy markets when:1d')

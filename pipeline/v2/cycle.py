@@ -1,7 +1,7 @@
 """Orchestrate one v2 cycle: Intent → Evidence → Verify → Research → Write.
 
-Parallel to the legacy pipeline. Steps 0–5: board, evidence, scout, research,
-and claim-based write (dry_run by default — previews only).
+Parallel to the legacy pipeline. Queues drafts when dry_run=False using the
+shared DraftBudget (default: writes enabled).
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from logging_config import setup_logging
+from pipeline.draft_budget import DraftBudget
 from pipeline.v2.evidence import fetch_evidence_packs
 from pipeline.v2.intent import build_intent_board
 from pipeline.v2.research import research_gaps
@@ -20,7 +21,12 @@ from pipeline.v2.write import write_from_claims
 logger = setup_logging()
 
 
-def run_v2_cycle(*, enabled: bool = True, dry_run: bool = True) -> CycleReport:
+def run_v2_cycle(
+    *,
+    enabled: bool = True,
+    dry_run: bool = True,
+    budget: DraftBudget | None = None,
+) -> CycleReport:
     """Execute the claim-centric pipeline once. Safe no-op when disabled."""
     started = time.perf_counter()
     report = CycleReport(enabled=enabled, dry_run=dry_run)
@@ -62,7 +68,6 @@ def run_v2_cycle(*, enabled: bool = True, dry_run: bool = True) -> CycleReport:
         packs_by_id = {pack.intent_id: pack for pack in packs}
         report.packs_ready = sum(1 for pack in packs if pack.meets_minimum)
 
-        # Refresh summary gaps after research
         for summary in report.intent_summaries:
             pack = packs_by_id.get(summary["id"])
             if not pack:
@@ -92,6 +97,7 @@ def run_v2_cycle(*, enabled: bool = True, dry_run: bool = True) -> CycleReport:
             intents=intents,
             packs=packs,
             dry_run=dry_run,
+            budget=budget,
         )
         report.drafted = drafted
         report.draft_previews = previews

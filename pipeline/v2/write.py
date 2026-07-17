@@ -105,8 +105,64 @@ def _build_draft(
         return _build_earnings_draft(claim, intent=intent, pack=pack)
     if claim.kind in ("macro_print", "fed_decision", "fed_speak", "macro_reaction"):
         return _build_macro_draft(claim, intent=intent, pack=pack)
+    if claim.kind in ("company_material", "ai_catalyst", "politics_policy"):
+        return _build_theme_draft(claim, intent=intent, pack=pack)
     return None
 
+
+def _build_theme_draft(
+    claim: Claim,
+    *,
+    intent: Intent | None,
+    pack: EvidencePack | None,
+) -> tuple[str, str, str, str, str, str] | None:
+    assertion = (claim.assertion or "").strip()
+    if len(assertion) < 20:
+        # Fall back to best evidence title
+        if pack:
+            for item in pack.items:
+                if item.metadata.get("kind") == "calendar":
+                    continue
+                if len(item.title or "") >= 20:
+                    assertion = item.title.strip()
+                    break
+    if len(assertion) < 20:
+        return None
+
+    tickers = claim.tickers or (intent.tickers if intent else []) or []
+    ticker_line = " ".join(f"${t}" for t in tickers[:4])
+    points: list[str] = []
+    key_points = claim.facts.get("key_points") if isinstance(claim.facts, dict) else None
+    if isinstance(key_points, list):
+        for point in key_points:
+            text = re.sub(r"\s+", " ", str(point)).strip()
+            if len(text) >= 25:
+                points.append(text[:140])
+            if len(points) >= 3:
+                break
+    if not points:
+        detail = _first_useful_snippet(pack)
+        if detail:
+            points.append(detail)
+
+    category = {
+        "company_material": "other",
+        "ai_catalyst": "ai",
+        "politics_policy": "geopolitics",
+    }.get(claim.kind, "other")
+
+    lines = [assertion]
+    for point in points[:2]:
+        if point.lower() not in assertion.lower():
+            lines.append(point)
+    if ticker_line:
+        lines.append("")
+        lines.append(ticker_line)
+    draft = "\n".join(lines).strip()
+    label = (intent.label if intent else None) or claim.kind
+    title = f"{label}: {assertion[:90]}"
+    impact = "high" if claim.confidence >= 0.85 else "med"
+    return title, assertion, draft, category, impact, "BREAKING"
 
 def _build_earnings_draft(
     claim: Claim,

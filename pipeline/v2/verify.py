@@ -284,6 +284,21 @@ def _fallback_claim(intent: Intent, pack: EvidencePack) -> Claim:
             reason="fallback keep — scout LLM unavailable; pack met minimum bar",
         )
 
+    if intent.kind in ("company_material", "ai_catalyst", "politics_policy"):
+        title = next((i.title for i in pack.items if i.title), intent.label or intent.kind)
+        return Claim(
+            intent_id=intent.id,
+            kind=intent.kind,
+            status="keep",
+            assertion=str(title)[:280],
+            tickers=list(intent.tickers),
+            period=intent.period,
+            evidence_urls=urls,
+            facts=facts,
+            confidence=0.55,
+            reason="fallback keep — scout LLM unavailable; pack met minimum bar",
+        )
+
     label = intent.label or intent.kind
     if meta.get("actual") is not None:
         facts["actual"] = meta.get("actual")

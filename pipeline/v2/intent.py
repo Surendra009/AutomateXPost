@@ -1,16 +1,15 @@
 """Build the Intent Board — what this cycle must try to cover.
 
-Step 1: seed from Finnhub earnings + economic calendars (earnings prints,
-macro prints, FOMC/Fed decisions). Optional standing Fed-news intent so
-Fed journalism is never absent from the board on quiet calendar days.
+Seeds: Finnhub earnings + macro/Fed calendars, standing Fed speak,
+watchlist company material, AI catalyst, and politics/policy themes.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
-from typing import Any
 
-from config import EARNINGS_PREVIEW_DAYS_FORWARD
+from config import EARNINGS_PREVIEW_DAYS_FORWARD, MAX_WEB_TICKERS_PER_CYCLE, MAX_WEB_TOPICS_PER_CYCLE
 from database import get_setting
 from logging_config import setup_logging
 from pipeline.earnings import _has_actual, fetch_earnings_calendar
@@ -28,30 +27,44 @@ from pipeline.watchlist_scope import in_watchlist, normalized_watchlist
 
 logger = setup_logging()
 
-# Caps keep the board focused; evidence/verify come in later steps.
 _MAX_EARNINGS_INTENTS = 12
 _MAX_MACRO_INTENTS = 8
+_MAX_COMPANY_INTENTS = 6
+
+_AI_TOPIC = re.compile(
+    r"\b(ai|a\.i\.|artificial intelligence|openai|anthropic|llm|chatgpt|gemini|gpu|semiconductor)\b",
+    re.I,
+)
+_POLITICS_TOPIC = re.compile(
+    r"\b(politic|election|tariff|sanction|congress|senate|white house|geopolit|war|nato|trade war)\b",
+    re.I,
+)
 
 
 def build_intent_board() -> list[Intent]:
     """Return must-cover intents for this cycle."""
-    intents: list[Intent] = []
-    if not get_finnhub_key():
-        logger.info("v2 intent board: Finnhub not configured — empty board")
-        return intents
-
     today = datetime.utcnow().date()
-    intents.extend(_seed_earnings_intents(today))
-    intents.extend(_seed_macro_intents(today))
-    intents.extend(_seed_standing_fed_intent(today, intents))
+    intents: list[Intent] = []
 
-    # Stable order: earnings → macro/fed calendar → standing fed
+    if get_finnhub_key():
+        intents.extend(_seed_earnings_intents(today))
+        intents.extend(_seed_macro_intents(today))
+    else:
+        logger.info("v2 intent board: Finnhub not configured — skipping calendar seeds")
+
+    intents.extend(_seed_standing_fed_intent(today, intents))
+    intents.extend(_seed_company_intents(today))
+    intents.extend(_seed_theme_intents(today))
+
     logger.info(
-        "v2 intent board: %d intents (earnings=%d macro=%d fed=%d)",
+        "v2 intent board: %d intents (earnings=%d macro=%d fed=%d company=%d ai=%d politics=%d)",
         len(intents),
         sum(1 for i in intents if i.kind == "earnings_print"),
         sum(1 for i in intents if i.kind == "macro_print"),
         sum(1 for i in intents if i.kind in ("fed_decision", "fed_speak")),
+        sum(1 for i in intents if i.kind == "company_material"),
+        sum(1 for i in intents if i.kind == "ai_catalyst"),
+        sum(1 for i in intents if i.kind == "politics_policy"),
     )
     return intents
 
@@ -84,20 +97,13 @@ def _seed_earnings_intents(today) -> list[Intent]:
         quarter, year = coerce_quarter_year(event.get("quarter"), event.get("year"))
         has_print = _has_actual(event)
 
-        # Without a watchlist, only prioritize names that already printed.
         if not has_watchlist and not has_print:
             continue
 
         if quarter and year:
             if not is_current_reporting_period(quarter, year, as_of=today, require_period=True):
                 continue
-        elif has_print:
-            # Printed but missing Q/Y — still seed so verify can drop later;
-            # avoids silently missing a watchlist name.
-            if not on_watchlist and has_watchlist:
-                continue
-        else:
-            # Preview without period — skip (can't target the right print)
+        elif not has_print:
             continue
 
         period = f"Q{quarter}-{year}" if quarter and year else None
@@ -107,7 +113,6 @@ def _seed_earnings_intents(today) -> list[Intent]:
         seen.add(intent_id)
 
         status = "reported" if has_print else "preview"
-        queries = _earnings_queries(symbol, quarter, year)
         out.append(
             Intent(
                 kind="earnings_print",
@@ -116,7 +121,7 @@ def _seed_earnings_intents(today) -> list[Intent]:
                 period=period,
                 label=symbol,
                 window_hours=8.0 if has_print else 24.0,
-                queries=queries,
+                queries=_earnings_queries(symbol, quarter, year),
                 metadata={
                     "date": date_str,
                     "hour": event.get("hour"),
@@ -240,3 +245,123 @@ def _seed_standing_fed_intent(today, existing: list[Intent]) -> list[Intent]:
             metadata={"date": date_str, "status": "standing", "standing": True},
         )
     ]
+
+
+def _seed_company_intents(today) -> list[Intent]:
+    """One material-news intent per watchlist ticker (capped)."""
+    watchlist = normalized_watchlist(get_setting("watchlist", []))[:MAX_WEB_TICKERS_PER_CYCLE]
+    date_str = today.isoformat()
+    out: list[Intent] = []
+    for symbol in watchlist[:_MAX_COMPANY_INTENTS]:
+        out.append(
+            Intent(
+                kind="company_material",
+                id=f"company:{symbol}:{date_str}",
+                tickers=[symbol],
+                label=symbol,
+                window_hours=12.0,
+                queries=[
+                    f'"{symbol}" stock (acquires OR acquisition OR merger OR guidance OR layoff OR CEO OR sues OR approved OR FDA) when:1d',
+                    f'"{symbol}" (announces OR unveils OR cuts OR raises) -opinion -newsletter when:1d',
+                ],
+                metadata={"date": date_str, "status": "standing", "standing": True},
+            )
+        )
+    return out
+
+
+def _normalized_topics() -> list[str]:
+    raw = get_setting("search_topics", []) or []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        text = str(item or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+    return out[:MAX_WEB_TOPICS_PER_CYCLE]
+
+
+def _seed_theme_intents(today) -> list[Intent]:
+    """AI + politics intents from search_topics, with standing fallbacks."""
+    date_str = today.isoformat()
+    topics = _normalized_topics()
+    out: list[Intent] = []
+
+    ai_topics = [t for t in topics if _AI_TOPIC.search(t)]
+    pol_topics = [t for t in topics if _POLITICS_TOPIC.search(t)]
+
+    if ai_topics:
+        for topic in ai_topics[:3]:
+            out.append(
+                Intent(
+                    kind="ai_catalyst",
+                    id=f"ai:{_slug(topic)}:{date_str}",
+                    tickers=["NVDA", "MSFT", "GOOGL", "META", "AMZN"],
+                    label=topic,
+                    window_hours=12.0,
+                    queries=[
+                        f'"{topic}" (launches OR release OR model OR funding OR partnership) when:1d',
+                        f"{topic} (OpenAI OR Anthropic OR Google OR Meta OR Nvidia) when:1d",
+                    ],
+                    metadata={"date": date_str, "status": "standing", "topic": topic},
+                )
+            )
+    else:
+        out.append(
+            Intent(
+                kind="ai_catalyst",
+                id=f"ai:standing:{date_str}",
+                tickers=["NVDA", "MSFT", "GOOGL", "META", "AMZN"],
+                label="AI",
+                window_hours=12.0,
+                queries=[
+                    "(OpenAI OR Anthropic OR Google OR Meta OR Nvidia) (model OR launches OR release OR GPT OR Claude OR Gemini) when:1d",
+                    '"artificial intelligence" (chip OR GPU OR regulation OR partnership) stock when:1d',
+                ],
+                metadata={"date": date_str, "status": "standing", "standing": True},
+            )
+        )
+
+    if pol_topics:
+        for topic in pol_topics[:3]:
+            out.append(
+                Intent(
+                    kind="politics_policy",
+                    id=f"politics:{_slug(topic)}:{date_str}",
+                    tickers=["SPY", "XLE", "XLF"],
+                    label=topic,
+                    window_hours=12.0,
+                    queries=[
+                        f'"{topic}" (tariff OR sanction OR bill OR executive OR ban OR trade) when:1d',
+                        f"{topic} (markets OR stocks OR oil OR rates) when:1d",
+                    ],
+                    metadata={"date": date_str, "status": "standing", "topic": topic},
+                )
+            )
+    else:
+        out.append(
+            Intent(
+                kind="politics_policy",
+                id=f"politics:standing:{date_str}",
+                tickers=["SPY", "XLE", "XLF"],
+                label="Policy",
+                window_hours=12.0,
+                queries=[
+                    "(tariff OR sanctions OR \"White House\" OR Congress) (trade OR China OR oil OR stocks) when:1d",
+                    "(geopolitics OR \"ceasefire\" OR NATO) (markets OR oil OR stocks) when:1d",
+                ],
+                metadata={"date": date_str, "status": "standing", "standing": True},
+            )
+        )
+
+    return out
+
+
+def _slug(text: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower()).strip("-")
+    return (slug or "topic")[:48]

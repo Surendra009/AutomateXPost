@@ -285,7 +285,7 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                     ingest_count += company_ingested
                     ingest_by_source["Finnhub Company"] = company_ingested
 
-                # Claim-centric v2 — parallel observation path (Step 0: dry-run, no drafts)
+                # Claim-centric v2 — shared budget; queues when PIPELINE_V2_DRY_RUN=false
                 try:
                     from pipeline.v2 import run_v2_cycle
                     from pipeline.v2.cycle import report_for_status
@@ -293,8 +293,11 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                     v2_report = run_v2_cycle(
                         enabled=PIPELINE_V2_ENABLED,
                         dry_run=PIPELINE_V2_DRY_RUN,
+                        budget=budget,
                     )
                     set_setting("pipeline_v2_last_report", report_for_status(v2_report))
+                    if v2_report.drafted:
+                        ingest_by_source["Pipeline v2"] = v2_report.drafted
                 except Exception as v2_exc:
                     logger.warning("pipeline v2 cycle failed (legacy continues): %s", v2_exc)
                     set_setting(

@@ -88,6 +88,8 @@ def _fetch_one(intent: Intent) -> EvidencePack:
         return _evidence_earnings(intent)
     if intent.kind in ("macro_print", "fed_decision", "fed_speak", "macro_reaction"):
         return _evidence_macro_fed(intent)
+    if intent.kind in ("company_material", "ai_catalyst", "politics_policy"):
+        return _evidence_theme(intent)
     return EvidencePack(
         intent_id=intent.id,
         gaps=["unsupported_kind"],
@@ -167,6 +169,8 @@ def reassess_pack(intent: Intent, pack: EvidencePack) -> EvidencePack:
         assessed = _assess_earnings(intent, items)
     elif intent.kind in ("macro_print", "fed_decision", "fed_speak", "macro_reaction"):
         assessed = _assess_macro_fed(intent, items)
+    elif intent.kind in ("company_material", "ai_catalyst", "politics_policy"):
+        assessed = _assess_theme(intent, items)
     else:
         assessed = EvidencePack(
             intent_id=intent.id,
@@ -180,6 +184,50 @@ def reassess_pack(intent: Intent, pack: EvidencePack) -> EvidencePack:
     pack.meets_minimum = assessed.meets_minimum
     pack.notes = assessed.notes
     return pack
+
+
+def _evidence_theme(intent: Intent) -> EvidencePack:
+    label = intent.label or intent.kind
+    items = _search_items(intent, source_label=f"v2 · {intent.kind} · {label}")
+    items = _dedupe_items(items)
+    _enrich_bodies(items, limit=_MAX_ARTICLE_FETCHES_PER_INTENT)
+    return _assess_theme(intent, items)
+
+
+def _assess_theme(intent: Intent, items: list[EvidenceItem]) -> EvidencePack:
+    """Minimum bar for company / AI / politics: tier-1/2 hit or 2 solid search items."""
+    gaps: list[str] = []
+    if not items:
+        gaps.append("need_evidence")
+        return EvidencePack(
+            intent_id=intent.id,
+            items=items,
+            gaps=gaps,
+            meets_minimum=False,
+            notes="No search hits yet",
+        )
+
+    if _has_tier(items, max_tier=2) or _has_body(items, _MIN_BODY_CHARS):
+        meets = True
+        notes = "Theme evidence ready"
+        if not _has_body(items, _MIN_BODY_CHARS):
+            gaps.append("need_body")
+    elif len(items) >= 2:
+        meets = True
+        gaps.append("need_body")
+        notes = "Multiple search hits — body preferred"
+    else:
+        meets = False
+        gaps.append("need_evidence")
+        notes = "Below theme minimum bar"
+
+    return EvidencePack(
+        intent_id=intent.id,
+        items=items,
+        gaps=gaps,
+        meets_minimum=meets,
+        notes=notes,
+    )
 
 
 def _assess_earnings(intent: Intent, items: list[EvidenceItem]) -> EvidencePack:

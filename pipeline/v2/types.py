@@ -111,7 +111,7 @@ class CycleReport:
     errors: list[str] = field(default_factory=list)
     intent_summaries: list[dict[str, Any]] = field(default_factory=list)
     enabled: bool = True
-    dry_run: bool = True  # When true, write previews only (no queue inserts)
+    dry_run: bool = False  # False → queue drafts via shared budget
     duration_ms: int = 0
     draft_previews: list[dict[str, Any]] = field(default_factory=list)
 
