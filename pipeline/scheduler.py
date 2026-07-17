@@ -57,25 +57,70 @@ _scheduled_task: asyncio.Task | None = None
 _manual_run_task: asyncio.Task | None = None
 _pipeline_running = False
 _pipeline_started_at: datetime | None = None
+_pipeline_cycle_id = 0
 _pipeline_lock = threading.Lock()
 
-_PIPELINE_STUCK_SECONDS = 900  # 15 min — reset flag so UI/API recover
+# Stuck recovery — v2 cycles can be slow; don't block Fetch Now for 15 minutes
+_PIPELINE_STUCK_SECONDS = 180  # auto-clear "running" after 3 min
+_PIPELINE_FORCE_STEAL_SECONDS = 90  # Fetch Now may clear after 90s
+
+
+def _running_for_seconds() -> float | None:
+    if not _pipeline_running or not _pipeline_started_at:
+        return None
+    return max(0.0, (datetime.utcnow() - _pipeline_started_at).total_seconds())
+
+
+def _clear_running_unlocked() -> None:
+    global _pipeline_running, _pipeline_started_at
+    _pipeline_running = False
+    _pipeline_started_at = None
+
+
+def _claim_cycle_unlocked() -> int:
+    """Mark pipeline running and return a cycle id. Caller must hold the lock."""
+    global _pipeline_running, _pipeline_started_at, _pipeline_cycle_id
+    _pipeline_cycle_id += 1
+    _pipeline_running = True
+    _pipeline_started_at = datetime.utcnow()
+    return _pipeline_cycle_id
+
+
+def _release_cycle(cycle_id: int) -> None:
+    """Clear running flag only if this cycle still owns it."""
+    global _pipeline_running, _pipeline_started_at
+    with _pipeline_lock:
+        if _pipeline_cycle_id == cycle_id:
+            _clear_running_unlocked()
 
 
 def _maybe_reset_stuck_pipeline() -> None:
-    global _pipeline_running, _pipeline_started_at
-    if not _pipeline_running or not _pipeline_started_at:
+    elapsed = _running_for_seconds()
+    if elapsed is None:
         return
-    elapsed = (datetime.utcnow() - _pipeline_started_at).total_seconds()
     if elapsed > _PIPELINE_STUCK_SECONDS:
         logger.warning("Pipeline running flag stale (%.0fs) — resetting", elapsed)
-        _pipeline_running = False
-        _pipeline_started_at = None
+        _clear_running_unlocked()
+
+
+def _maybe_force_steal_for_fetch() -> bool:
+    """Clear a long-running flag so Fetch Now can start. Returns True if stole."""
+    elapsed = _running_for_seconds()
+    if elapsed is None:
+        return False
+    if elapsed < _PIPELINE_FORCE_STEAL_SECONDS:
+        return False
+    logger.warning("Fetch Now stealing pipeline flag after %.0fs", elapsed)
+    _clear_running_unlocked()
+    return True
 
 
 def get_pipeline_status(*, lightweight: bool = False) -> dict:
     """Return last pipeline run metadata for the settings UI."""
-    _maybe_reset_stuck_pipeline()
+    with _pipeline_lock:
+        _maybe_reset_stuck_pipeline()
+        running = _pipeline_running
+        running_for = _running_for_seconds()
     ingest_by_source = get_setting("pipeline_last_ingest_by_source", {})
     if not isinstance(ingest_by_source, dict):
         ingest_by_source = {}
@@ -85,7 +130,8 @@ def get_pipeline_status(*, lightweight: bool = False) -> dict:
         logger.warning("schedule_status failed: %s", exc)
         sched = {"error": str(exc)[:120]}
     status = {
-        "running": _pipeline_running,
+        "running": running,
+        "running_for_seconds": int(running_for) if running_for is not None else None,
         "last_run_at": get_setting("pipeline_last_run_at"),
         "last_ingest_count": get_setting("pipeline_last_ingest_count", 0),
         "last_drafts_created": get_setting("pipeline_last_drafts_created", 0),
@@ -194,188 +240,207 @@ def _save_cycle_stats(
         set_setting("pipeline_last_ingest_by_source", ingest_by_source)
 
 
-async def run_pipeline_cycle(*, force: bool = False) -> dict:
+async def run_pipeline_cycle(*, force: bool = False, cycle_id: int | None = None) -> dict:
     """Single pipeline cycle: expire → ingest → structured drafts → filter → LLM draft."""
-    return await asyncio.to_thread(_run_pipeline_cycle, force=force)
+    return await asyncio.to_thread(_run_pipeline_cycle, force=force, cycle_id=cycle_id)
 
 
 def trigger_pipeline_cycle(*, force: bool = False) -> dict:
     """Schedule a pipeline cycle on the running event loop; returns immediately."""
     global _manual_run_task
 
-    if _pipeline_running:
-        return {"started": False, "reason": "already_running", **get_pipeline_status(lightweight=True)}
+    with _pipeline_lock:
+        _maybe_reset_stuck_pipeline()
+        if force:
+            _maybe_force_steal_for_fetch()
+        if _pipeline_running:
+            secs = _running_for_seconds()
+            blocked = True
+            cycle_id = None
+        else:
+            blocked = False
+            cycle_id = _claim_cycle_unlocked()
+
+    if blocked:
+        status = get_pipeline_status(lightweight=True)
+        status["started"] = False
+        status["reason"] = "already_running"
+        if secs is not None:
+            status["running_for_seconds"] = int(secs)
+        return status
 
     async def _run() -> None:
         try:
-            await run_pipeline_cycle(force=force)
+            await run_pipeline_cycle(force=force, cycle_id=cycle_id)
         except Exception as exc:
             logger.error("Background pipeline cycle failed: %s", exc, exc_info=True)
+            _release_cycle(cycle_id)
 
     _manual_run_task = asyncio.get_running_loop().create_task(_run())
-    return {"started": True, "running": True}
+    return {"started": True, "running": True, "cycle_id": cycle_id, **get_pipeline_status(lightweight=True)}
 
 
-def _run_pipeline_cycle(*, force: bool = False) -> dict:
-    global _pipeline_running, _pipeline_started_at
+def _run_pipeline_cycle(*, force: bool = False, cycle_id: int | None = None) -> dict:
+    """Run one cycle. If cycle_id is None, claim a new one (scheduler tick)."""
+    owned_id = cycle_id
+    if owned_id is None:
+        with _pipeline_lock:
+            _maybe_reset_stuck_pipeline()
+            if _pipeline_running:
+                logger.debug("Pipeline cycle skipped — already running")
+                return get_pipeline_status(lightweight=True)
+            decision_pre = evaluate_schedule(force=force)
+            if not decision_pre.run:
+                logger.debug("Pipeline skipped: %s", decision_pre.reason)
+                set_setting("pipeline_last_schedule_skip", decision_pre.reason)
+                return get_pipeline_status(lightweight=True)
+            owned_id = _claim_cycle_unlocked()
 
-    if not _pipeline_lock.acquire(blocking=False):
-        logger.debug("Pipeline cycle skipped — lock held by another cycle")
+    decision = evaluate_schedule(force=force)
+    if not decision.run:
+        logger.debug("Pipeline skipped: %s", decision.reason)
+        set_setting("pipeline_last_schedule_skip", decision.reason)
+        _release_cycle(owned_id)
         return get_pipeline_status(lightweight=True)
 
+    ingest_count = 0
+    skipped_stale = 0
+    skipped_dup = 0
+    expired = 0
+    budget = DraftBudget()
+    cycle_start = datetime.utcnow()
+
     try:
-        if _pipeline_running:
-            return get_pipeline_status(lightweight=True)
+        with cycle_max_news_age(decision.max_news_age_hours):
+            if not get_setting("pipeline_enabled", True):
+                logger.debug("Pipeline disabled, skipping cycle")
+                _save_cycle_stats()
+                return get_pipeline_status(lightweight=True)
 
-        decision = evaluate_schedule(force=force)
-        if not decision.run:
-            logger.debug("Pipeline skipped: %s", decision.reason)
-            set_setting("pipeline_last_schedule_skip", decision.reason)
-            return get_pipeline_status(lightweight=True)
-
-        _pipeline_running = True
-        _pipeline_started_at = datetime.utcnow()
-        ingest_count = 0
-        skipped_stale = 0
-        skipped_dup = 0
-        expired = 0
-        budget = DraftBudget()
-        cycle_start = datetime.utcnow()
-
-        try:
-            with cycle_max_news_age(decision.max_news_age_hours):
-                if not get_setting("pipeline_enabled", True):
-                    logger.debug("Pipeline disabled, skipping cycle")
+            paused_until = get_setting("paused_until")
+            if paused_until:
+                pause_dt = parse_utc_naive(paused_until)
+                if pause_dt and datetime.utcnow() < pause_dt:
+                    logger.debug("Pipeline paused until %s", paused_until)
                     _save_cycle_stats()
                     return get_pipeline_status(lightweight=True)
 
-                paused_until = get_setting("paused_until")
-                if paused_until:
-                    pause_dt = parse_utc_naive(paused_until)
-                    if pause_dt and datetime.utcnow() < pause_dt:
-                        logger.debug("Pipeline paused until %s", paused_until)
-                        _save_cycle_stats()
-                        return get_pipeline_status(lightweight=True)
+            logger.info("Pipeline cycle starting (%s)", decision.mode)
+            reset_earnings_highlight_budget()
+            reset_earnings_enrich_stats()
+            clear_sec_feed_cache()
+            expired = expire_stale_drafts()
+            discarded = discard_stale_headlines()
+            ingest_count, ingest_by_source, skipped_stale, skipped_dup = ingest_headlines()
 
-                logger.info("Pipeline cycle starting (%s)", decision.mode)
-                reset_earnings_highlight_budget()
-                reset_earnings_enrich_stats()
-                clear_sec_feed_cache()
-                expired = expire_stale_drafts()
-                discarded = discard_stale_headlines()
-                ingest_count, ingest_by_source, skipped_stale, skipped_dup = ingest_headlines()
+            # Claim-centric v2 first — owns earnings/macro/company when live-writing
+            v2_live = PIPELINE_V2_ENABLED and not PIPELINE_V2_DRY_RUN
+            try:
+                from pipeline.v2 import run_v2_cycle
+                from pipeline.v2.cycle import report_for_status
 
-                # Claim-centric v2 first — owns earnings/macro/company when live-writing
-                v2_live = PIPELINE_V2_ENABLED and not PIPELINE_V2_DRY_RUN
-                try:
-                    from pipeline.v2 import run_v2_cycle
-                    from pipeline.v2.cycle import report_for_status
-
-                    v2_report = run_v2_cycle(
-                        enabled=PIPELINE_V2_ENABLED,
-                        dry_run=PIPELINE_V2_DRY_RUN,
-                        budget=budget,
-                    )
-                    set_setting("pipeline_v2_last_report", report_for_status(v2_report))
-                    if v2_report.drafted:
-                        ingest_by_source["Pipeline v2"] = v2_report.drafted
-                except Exception as v2_exc:
-                    logger.warning("pipeline v2 cycle failed (legacy continues): %s", v2_exc)
-                    set_setting(
-                        "pipeline_v2_last_report",
-                        {"ran": False, "enabled": PIPELINE_V2_ENABLED, "error": str(v2_exc)[:200]},
-                    )
-                    v2_live = False  # fall back to legacy structured lanes
-
-                if v2_live:
-                    logger.info(
-                        "v2 live — skipping legacy Finnhub earnings/macro/company structured drafts"
-                    )
-                else:
-                    earnings_ingested, _ = process_earnings(budget)
-                    if earnings_ingested:
-                        ingest_count += earnings_ingested
-                        ingest_by_source["Finnhub Earnings"] = earnings_ingested
-
-                    macro_ingested, _ = process_macro_calendar(budget)
-                    if macro_ingested:
-                        ingest_count += macro_ingested
-                        ingest_by_source["Finnhub Macro"] = macro_ingested
-
-                    company_ingested, _ = process_company_news(budget)
-                    if company_ingested:
-                        ingest_count += company_ingested
-                        ingest_by_source["Finnhub Company"] = company_ingested
-
-                sec_ingested, _ = process_sec_filings(budget)
-                if sec_ingested:
-                    ingest_count += sec_ingested
-                    ingest_by_source["SEC 8-K (structured)"] = sec_ingested
-
-                headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
-                headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
-                filter_kept = 0
-                filter_error: str | None = None
-                if headlines and budget.remaining > 0:
-                    filtered, filter_error = filter_headlines(headlines)
-                    filter_kept = len(filtered)
-                    filtered = select_diverse_for_drafting(filtered, budget.remaining * 2)
-                    if filtered:
-                        draft_posts(filtered, budget)
-
-                cycle_error = filter_error
-                _save_cycle_stats(
-                    ingest_count=ingest_count,
-                    drafts_created=budget.created,
-                    filter_kept=filter_kept,
-                    expired=expired,
-                    error=cycle_error,
-                    ingest_by_source=ingest_by_source,
-                    skipped_stale=skipped_stale,
-                    skipped_dup=skipped_dup,
+                v2_report = run_v2_cycle(
+                    enabled=PIPELINE_V2_ENABLED,
+                    dry_run=PIPELINE_V2_DRY_RUN,
+                    budget=budget,
+                    max_seconds=75,
                 )
-                set_setting("pipeline_last_schedule_mode", decision.mode)
-                set_setting("pipeline_last_schedule_skip", None)
-                if decision.mode == "catchup":
-                    set_setting(CATCHUP_SETTING_KEY, local_now().isoformat())
+                set_setting("pipeline_v2_last_report", report_for_status(v2_report))
+                if v2_report.drafted:
+                    ingest_by_source["Pipeline v2"] = v2_report.drafted
+            except Exception as v2_exc:
+                logger.warning("pipeline v2 cycle failed (legacy continues): %s", v2_exc)
+                set_setting(
+                    "pipeline_v2_last_report",
+                    {"ran": False, "enabled": PIPELINE_V2_ENABLED, "error": str(v2_exc)[:200]},
+                )
+                v2_live = False  # fall back to legacy structured lanes
 
+            if v2_live:
                 logger.info(
-                    "Pipeline cycle complete (%s, ingested=%d, drafts=%d, expired=%d, discarded=%d)",
-                    decision.mode,
-                    ingest_count,
-                    budget.created,
-                    expired,
-                    discarded,
+                    "v2 live — skipping legacy Finnhub earnings/macro/company structured drafts"
                 )
+            else:
+                earnings_ingested, _ = process_earnings(budget)
+                if earnings_ingested:
+                    ingest_count += earnings_ingested
+                    ingest_by_source["Finnhub Earnings"] = earnings_ingested
 
-                if budget.created:
-                    notify_new_drafts(budget.created)
-                    notify_discord_new_drafts(cycle_start)
-                    notify_teams_new_drafts(cycle_start)
+                macro_ingested, _ = process_macro_calendar(budget)
+                if macro_ingested:
+                    ingest_count += macro_ingested
+                    ingest_by_source["Finnhub Macro"] = macro_ingested
 
-                check_pipeline_health(budget.created, None)
-                refresh_post_metrics()
+                company_ingested, _ = process_company_news(budget)
+                if company_ingested:
+                    ingest_count += company_ingested
+                    ingest_by_source["Finnhub Company"] = company_ingested
 
-        except Exception as e:
-            logger.error("Pipeline cycle error: %s", e, exc_info=True)
-            send_alert("Pipeline cycle failed", str(e), level="error")
+            sec_ingested, _ = process_sec_filings(budget)
+            if sec_ingested:
+                ingest_count += sec_ingested
+                ingest_by_source["SEC 8-K (structured)"] = sec_ingested
+
+            headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
+            headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
+            filter_kept = 0
+            filter_error: str | None = None
+            if headlines and budget.remaining > 0:
+                filtered, filter_error = filter_headlines(headlines)
+                filter_kept = len(filtered)
+                filtered = select_diverse_for_drafting(filtered, budget.remaining * 2)
+                if filtered:
+                    draft_posts(filtered, budget)
+
+            cycle_error = filter_error
             _save_cycle_stats(
                 ingest_count=ingest_count,
                 drafts_created=budget.created,
+                filter_kept=filter_kept,
                 expired=expired,
-                error=str(e),
+                error=cycle_error,
+                ingest_by_source=ingest_by_source,
                 skipped_stale=skipped_stale,
                 skipped_dup=skipped_dup,
             )
-            check_pipeline_health(budget.created, str(e))
-        finally:
-            _pipeline_running = False
-            _pipeline_started_at = None
+            set_setting("pipeline_last_schedule_mode", decision.mode)
+            set_setting("pipeline_last_schedule_skip", None)
+            if decision.mode == "catchup":
+                set_setting(CATCHUP_SETTING_KEY, local_now().isoformat())
 
-        return get_pipeline_status(lightweight=True)
+            logger.info(
+                "Pipeline cycle complete (%s, ingested=%d, drafts=%d, expired=%d, discarded=%d)",
+                decision.mode,
+                ingest_count,
+                budget.created,
+                expired,
+                discarded,
+            )
+
+            if budget.created:
+                notify_new_drafts(budget.created)
+                notify_discord_new_drafts(cycle_start)
+                notify_teams_new_drafts(cycle_start)
+
+            check_pipeline_health(budget.created, None)
+            refresh_post_metrics()
+
+    except Exception as e:
+        logger.error("Pipeline cycle error: %s", e, exc_info=True)
+        send_alert("Pipeline cycle failed", str(e), level="error")
+        _save_cycle_stats(
+            ingest_count=ingest_count,
+            drafts_created=budget.created,
+            expired=expired,
+            error=str(e),
+            skipped_stale=skipped_stale,
+            skipped_dup=skipped_dup,
+        )
+        check_pipeline_health(budget.created, str(e))
     finally:
-        _pipeline_lock.release()
+        _release_cycle(owned_id)
 
+    return get_pipeline_status(lightweight=True)
 
 async def pipeline_loop(interval: int = 300) -> None:
     """Run pipeline on a dynamic interval (faster during market hours)."""

@@ -26,6 +26,7 @@ def run_v2_cycle(
     enabled: bool = True,
     dry_run: bool = True,
     budget: DraftBudget | None = None,
+    max_seconds: float = 75.0,
 ) -> CycleReport:
     """Execute the claim-centric pipeline once. Safe no-op when disabled."""
     started = time.perf_counter()
@@ -36,71 +37,92 @@ def run_v2_cycle(
         logger.debug("v2 cycle skipped — disabled")
         return report
 
+    def _timed_out() -> bool:
+        return (time.perf_counter() - started) >= max_seconds
+
     try:
         intents = build_intent_board()
+        # Prefer actionable calendar intents when short on time
+        if len(intents) > 10:
+            priority = [
+                i
+                for i in intents
+                if i.kind in ("earnings_print", "macro_print", "fed_decision")
+                or (i.metadata or {}).get("status") == "reported"
+            ]
+            rest = [i for i in intents if i not in priority]
+            intents = (priority + rest)[:10]
         report.intents = len(intents)
 
-        packs = fetch_evidence_packs(intents)
-        report.packs = len(packs)
-        report.packs_ready = sum(1 for pack in packs if pack.meets_minimum)
-        packs_by_id = {pack.intent_id: pack for pack in packs}
+        if _timed_out():
+            report.errors.append("v2 time budget exhausted before evidence")
+        else:
+            packs = fetch_evidence_packs(intents)
+            report.packs = len(packs)
+            report.packs_ready = sum(1 for pack in packs if pack.meets_minimum)
+            packs_by_id = {pack.intent_id: pack for pack in packs}
 
-        report.intent_summaries = []
-        for intent in intents:
-            pack = packs_by_id.get(intent.id)
-            report.intent_summaries.append(
-                {
-                    "id": intent.id,
-                    "kind": intent.kind,
-                    "tickers": intent.tickers,
-                    "period": intent.period,
-                    "label": intent.label,
-                    "meets_minimum": bool(pack and pack.meets_minimum),
-                    "gaps": list(pack.gaps) if pack else [],
-                    "evidence_count": len(pack.items) if pack else 0,
-                    "notes": (pack.notes if pack else "")[:160],
-                }
+            report.intent_summaries = []
+            for intent in intents:
+                pack = packs_by_id.get(intent.id)
+                report.intent_summaries.append(
+                    {
+                        "id": intent.id,
+                        "kind": intent.kind,
+                        "tickers": intent.tickers,
+                        "period": intent.period,
+                        "label": intent.label,
+                        "meets_minimum": bool(pack and pack.meets_minimum),
+                        "gaps": list(pack.gaps) if pack else [],
+                        "evidence_count": len(pack.items) if pack else 0,
+                        "notes": (pack.notes if pack else "")[:160],
+                    }
+                )
+
+            claims = verify_packs(intents, packs)
+            if not _timed_out():
+                claims, packs, researched = research_gaps(intents, claims, packs)
+                report.researched = researched
+            else:
+                report.errors.append("v2 skipped research — time budget")
+                researched = 0
+
+            packs_by_id = {pack.intent_id: pack for pack in packs}
+            report.packs_ready = sum(1 for pack in packs if pack.meets_minimum)
+
+            for summary in report.intent_summaries:
+                pack = packs_by_id.get(summary["id"])
+                if not pack:
+                    continue
+                summary["meets_minimum"] = pack.meets_minimum
+                summary["gaps"] = list(pack.gaps)
+                summary["evidence_count"] = len(pack.items)
+                summary["notes"] = (pack.notes or "")[:160]
+
+            report.claims_keep = sum(1 for c in claims if c.status == "keep")
+            report.claims_drop = sum(1 for c in claims if c.status == "drop")
+            report.claims_waiting = sum(1 for c in claims if c.status == "waiting")
+
+            claims_by_intent = {c.intent_id: c for c in claims}
+            for summary in report.intent_summaries:
+                claim = claims_by_intent.get(summary["id"])
+                if not claim:
+                    continue
+                summary["claim_status"] = claim.status
+                summary["claim_reason"] = (claim.reason or "")[:160]
+                summary["confidence"] = claim.confidence
+                if claim.assertion:
+                    summary["assertion"] = claim.assertion[:160]
+
+            drafted, previews = write_from_claims(
+                claims,
+                intents=intents,
+                packs=packs,
+                dry_run=dry_run,
+                budget=budget,
             )
-
-        claims = verify_packs(intents, packs)
-        claims, packs, researched = research_gaps(intents, claims, packs)
-        report.researched = researched
-        packs_by_id = {pack.intent_id: pack for pack in packs}
-        report.packs_ready = sum(1 for pack in packs if pack.meets_minimum)
-
-        for summary in report.intent_summaries:
-            pack = packs_by_id.get(summary["id"])
-            if not pack:
-                continue
-            summary["meets_minimum"] = pack.meets_minimum
-            summary["gaps"] = list(pack.gaps)
-            summary["evidence_count"] = len(pack.items)
-            summary["notes"] = (pack.notes or "")[:160]
-
-        report.claims_keep = sum(1 for c in claims if c.status == "keep")
-        report.claims_drop = sum(1 for c in claims if c.status == "drop")
-        report.claims_waiting = sum(1 for c in claims if c.status == "waiting")
-
-        claims_by_intent = {c.intent_id: c for c in claims}
-        for summary in report.intent_summaries:
-            claim = claims_by_intent.get(summary["id"])
-            if not claim:
-                continue
-            summary["claim_status"] = claim.status
-            summary["claim_reason"] = (claim.reason or "")[:160]
-            summary["confidence"] = claim.confidence
-            if claim.assertion:
-                summary["assertion"] = claim.assertion[:160]
-
-        drafted, previews = write_from_claims(
-            claims,
-            intents=intents,
-            packs=packs,
-            dry_run=dry_run,
-            budget=budget,
-        )
-        report.drafted = drafted
-        report.draft_previews = previews
+            report.drafted = drafted
+            report.draft_previews = previews
     except Exception as exc:
         logger.exception("v2 cycle failed: %s", exc)
         report.errors.append(str(exc)[:240])
