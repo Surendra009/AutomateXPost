@@ -1,7 +1,7 @@
 """Orchestrate one v2 cycle: Intent → Evidence → Verify → Research → Write.
 
-Runs alongside the legacy pipeline. Step 0 is log-only (dry_run=True):
-no drafts, no LLM calls, empty intent board until Step 1 seeds it.
+Runs alongside the legacy pipeline. Step 1 seeds the Intent Board from
+earnings + economic calendars; evidence/verify/write remain dry-run stubs.
 """
 
 from __future__ import annotations
