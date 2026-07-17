@@ -512,10 +512,15 @@ def finnhub_test(request: Request):
 async def pipeline_run(request: Request):
     require_auth(request)
     check_action_rate_limit(request, "pipeline", max_calls=10, window_seconds=60)
-    status = get_pipeline_status(lightweight=True)
-    if status["running"]:
-        raise HTTPException(status_code=409, detail="Pipeline is already running")
-    return trigger_pipeline_cycle(force=True)
+    result = trigger_pipeline_cycle(force=True)
+    if not result.get("started"):
+        secs = result.get("running_for_seconds")
+        detail = "Pipeline is already running"
+        if secs is not None:
+            detail = f"Pipeline is already running ({secs}s) — try again shortly"
+        raise HTTPException(status_code=409, detail=detail)
+    return result
+
 
 
 @router.post("/analytics/refresh")
