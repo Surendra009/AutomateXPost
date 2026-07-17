@@ -1,7 +1,7 @@
 """Orchestrate one v2 cycle: Intent → Evidence → Verify → Research → Write.
 
-Runs alongside the legacy pipeline. Step 1 seeds the Intent Board from
-earnings + economic calendars; evidence/verify/write remain dry-run stubs.
+Runs alongside the legacy pipeline. Step 2 fetches evidence packs and
+enforces minimum bars; scout/write remain dry-run stubs (no drafts).
 """
 
 from __future__ import annotations
@@ -33,20 +33,28 @@ def run_v2_cycle(*, enabled: bool = True, dry_run: bool = True) -> CycleReport:
     try:
         intents = build_intent_board()
         report.intents = len(intents)
-        report.intent_summaries = [
-            {
-                "id": intent.id,
-                "kind": intent.kind,
-                "tickers": intent.tickers,
-                "period": intent.period,
-                "label": intent.label,
-            }
-            for intent in intents
-        ]
 
         packs = fetch_evidence_packs(intents)
         report.packs = len(packs)
         report.packs_ready = sum(1 for pack in packs if pack.meets_minimum)
+        packs_by_id = {pack.intent_id: pack for pack in packs}
+
+        report.intent_summaries = []
+        for intent in intents:
+            pack = packs_by_id.get(intent.id)
+            report.intent_summaries.append(
+                {
+                    "id": intent.id,
+                    "kind": intent.kind,
+                    "tickers": intent.tickers,
+                    "period": intent.period,
+                    "label": intent.label,
+                    "meets_minimum": bool(pack and pack.meets_minimum),
+                    "gaps": list(pack.gaps) if pack else [],
+                    "evidence_count": len(pack.items) if pack else 0,
+                    "notes": (pack.notes if pack else "")[:160],
+                }
+            )
 
         claims = verify_packs(intents, packs)
         claims, packs, researched = research_gaps(claims, packs)

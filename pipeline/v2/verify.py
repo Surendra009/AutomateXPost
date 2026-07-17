@@ -57,7 +57,7 @@ def verify_packs(
                 period=intent.period,
                 evidence_urls=[item.url for item in pack.items if item.url],
                 gaps=["scout_llm_not_wired"],
-                reason="Step 0: scout verifier not implemented",
+                reason="Evidence ready — scout verifier not implemented yet",
             )
         )
 
