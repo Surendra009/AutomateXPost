@@ -20,6 +20,7 @@ logger = setup_logging()
 
 V2_SOURCE = "Pipeline v2"
 _MAX_V2_DRAFTS = 3
+_MIN_WRITE_CONFIDENCE = 0.7
 
 
 def write_from_claims(
@@ -37,7 +38,11 @@ def write_from_claims(
     """
     intents_by_id = {i.id: i for i in (intents or [])}
     packs_by_id = {p.intent_id: p for p in (packs or [])}
-    eligible = [c for c in claims if c.status == "keep"]
+    eligible = sorted(
+        [c for c in claims if c.status == "keep" and c.confidence >= _MIN_WRITE_CONFIDENCE],
+        key=lambda c: c.confidence,
+        reverse=True,
+    )
     previews: list[dict[str, Any]] = []
     created = 0
 
@@ -68,30 +73,47 @@ def write_from_claims(
         if budget is not None and budget.remaining <= 0:
             break
 
-        tickers = " ".join(f"${t}" for t in (claim.tickers or [])[:4]) or "$SPY"
-        url = (claim.evidence_urls[0] if claim.evidence_urls else "") or f"v2://claim/{claim.intent_id}"
+        ticker_list = [t.strip().upper() for t in (claim.tickers or [])[:4] if str(t).strip()]
+        tickers_csv = ",".join(ticker_list) if ticker_list else "SPY"
+        # Prefer an http(s) evidence URL for the headline row
+        url = next(
+            (u for u in (claim.evidence_urls or []) if str(u).startswith("http")),
+            f"https://v2.local/{claim.intent_id}",
+        )
         chash = content_hash(V2_SOURCE, claim.intent_id, title, draft_text[:200])
+        # earnings_ticker_blocked expects a single symbol
+        block_ticker = ticker_list[0] if ticker_list else "SPY"
         ok = save_structured_draft(
             source=V2_SOURCE,
-            url=url if url.startswith("http") else f"https://v2.local/{claim.intent_id}",
+            url=url,
             title=title,
             summary=summary,
             draft_text=draft_text,
-            tickers=tickers.replace("$", "").replace("  ", " ").strip() or "SPY",
+            tickers=tickers_csv if category != "earnings" else block_ticker,
             category=category,
             impact=impact,
             fmt=fmt,
-            confidence=max(claim.confidence, 0.7),
+            confidence=claim.confidence,
             chash=chash,
             budget=budget,
         )
         if ok:
             created += 1
 
+    skipped_low = sum(1 for c in claims if c.status == "keep" and c.confidence < _MIN_WRITE_CONFIDENCE)
     if dry_run:
-        logger.info("v2 write: dry-run — %d keep previews (0 queued)", len(previews))
+        logger.info(
+            "v2 write: dry-run — %d keep previews (0 queued, skipped_low_conf=%d)",
+            len(previews),
+            skipped_low,
+        )
     else:
-        logger.info("v2 write: queued %d drafts from %d keep claims", created, len(eligible))
+        logger.info(
+            "v2 write: queued %d drafts from %d eligible keep claims (skipped_low_conf=%d)",
+            created,
+            len(eligible),
+            skipped_low,
+        )
     return created, previews
 
 

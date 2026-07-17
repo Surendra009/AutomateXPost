@@ -196,6 +196,19 @@ def _evidence_theme(intent: Intent) -> EvidencePack:
 
 def _assess_theme(intent: Intent, items: list[EvidenceItem]) -> EvidencePack:
     """Minimum bar for company / AI / politics: tier-1/2 hit or 2 solid search items."""
+    if intent.kind == "company_material" and intent.tickers:
+        symbol = intent.tickers[0].upper()
+        relevant = [i for i in items if symbol in (i.title or "").upper() or symbol in (i.snippet or "").upper()]
+        if not relevant:
+            return EvidencePack(
+                intent_id=intent.id,
+                items=items,
+                gaps=["need_relevant_headline"],
+                meets_minimum=False,
+                notes=f"No {symbol}-relevant headlines yet",
+            )
+        items = relevant + [i for i in items if i not in relevant]
+
     gaps: list[str] = []
     if not items:
         gaps.append("need_evidence")
@@ -412,10 +425,14 @@ def _search_items(intent: Intent, *, source_label: str) -> list[EvidenceItem]:
     items: list[EvidenceItem] = []
     seen: set[str] = set()
     for query in (intent.queries or [])[:_MAX_QUERIES_PER_INTENT]:
+        # recency=1d already appends when:1d — strip duplicates from planned queries
+        clean_q = re.sub(r"\s*when:\d+[dwm]\b", "", query, flags=re.I).strip()
+        if not clean_q:
+            continue
         try:
-            batch = search_news(query, source_label=source_label, limit=_MAX_SEARCH_HITS, recency="1d")
+            batch = search_news(clean_q, source_label=source_label, limit=_MAX_SEARCH_HITS, recency="1d")
         except Exception as exc:
-            logger.debug("v2 search failed %s: %s", query[:60], exc)
+            logger.debug("v2 search failed %s: %s", clean_q[:60], exc)
             continue
         for raw in batch:
             url = (raw.get("url") or "").strip()
@@ -434,7 +451,7 @@ def _search_items(intent: Intent, *, source_label: str) -> list[EvidenceItem]:
                     published_at=published if isinstance(published, datetime) else None,
                     snippet=(raw.get("summary") or "")[:500],
                     body_chars=0,
-                    metadata={"kind": "search", "query": query, "source": raw.get("source")},
+                    metadata={"kind": "search", "query": clean_q, "source": raw.get("source")},
                 )
             )
     return items
