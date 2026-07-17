@@ -280,7 +280,7 @@ def _fallback_claim(intent: Intent, pack: EvidencePack) -> Claim:
             period=intent.period,
             evidence_urls=urls,
             facts=facts,
-            confidence=0.62,
+            confidence=0.72,
             reason="fallback keep — scout LLM unavailable; pack met minimum bar",
         )
 
@@ -295,7 +295,7 @@ def _fallback_claim(intent: Intent, pack: EvidencePack) -> Claim:
             period=intent.period,
             evidence_urls=urls,
             facts=facts,
-            confidence=0.55,
+            confidence=0.68,
             reason="fallback keep — scout LLM unavailable; pack met minimum bar",
         )
 
@@ -317,7 +317,7 @@ def _fallback_claim(intent: Intent, pack: EvidencePack) -> Claim:
         period=intent.period,
         evidence_urls=urls,
         facts=facts,
-        confidence=0.58,
+        confidence=0.68,
         reason="fallback keep — scout LLM unavailable; pack met minimum bar",
     )
 

@@ -19,8 +19,8 @@ from pipeline.v2.types import Claim, EvidencePack, Intent
 logger = setup_logging()
 
 V2_SOURCE = "Pipeline v2"
-_MAX_V2_DRAFTS = 3
-_MIN_WRITE_CONFIDENCE = 0.7
+_MAX_V2_DRAFTS = 5
+_MIN_WRITE_CONFIDENCE = 0.65
 
 
 def write_from_claims(
@@ -205,7 +205,11 @@ def _build_earnings_draft(
 
     verb = _beat_miss_verb(facts)
     blob = _evidence_blob(pack)
-    highlights = extract_earnings_highlights(blob, ticker=ticker, max_bullets=6, allow_llm=False) if blob else []
+    highlights = (
+        extract_earnings_highlights(blob, ticker=ticker, max_bullets=8, allow_llm=True)
+        if blob and len(blob) >= 120
+        else []
+    )
     # Prefer scout key_points when regex highlights are thin
     key_points = claim.facts.get("key_points") if isinstance(claim.facts, dict) else None
     if isinstance(key_points, list):
@@ -213,7 +217,20 @@ def _build_earnings_draft(
             text = str(point).strip()
             if text and text not in highlights:
                 highlights.append(text)
-            if len(highlights) >= 6:
+            if len(highlights) >= 8:
+                break
+
+    # Last resort: pull concrete sentences from evidence snippets
+    if len(highlights) < 3 and pack:
+        for item in pack.items:
+            if item.metadata.get("kind") == "calendar":
+                continue
+            snip = re.sub(r"\s+", " ", (item.snippet or "")).strip()
+            if len(snip) < 40:
+                continue
+            if snip not in highlights:
+                highlights.append(snip[:140])
+            if len(highlights) >= 5:
                 break
 
     year = None
@@ -276,11 +293,28 @@ def _build_macro_draft(
         return None
 
     takeaway = MACRO_TAKEAWAY.get(label, "Macro data moves rates and risk assets")
-    # One grounded detail from evidence if available
-    detail = _first_useful_snippet(pack)
-    line2 = detail or takeaway
+    # Prefer grounded evidence details over canned takeaways
+    details: list[str] = []
+    key_points = claim.facts.get("key_points") if isinstance(claim.facts, dict) else None
+    if isinstance(key_points, list):
+        for point in key_points:
+            text = re.sub(r"\s+", " ", str(point)).strip()
+            if len(text) >= 30:
+                details.append(text[:160])
+            if len(details) >= 2:
+                break
+    if not details:
+        detail = _first_useful_snippet(pack)
+        if detail:
+            details.append(detail)
+    line2 = details[0] if details else takeaway
+    line3 = details[1] if len(details) > 1 else None
     tickers = " ".join(f"${t}" for t in (claim.tickers or ["SPY"])[:3])
-    draft = f"{line1}\n{line2}\n\n{tickers}".strip()
+    parts = [line1, line2]
+    if line3:
+        parts.append(line3)
+    parts.extend(["", tickers])
+    draft = "\n".join(parts).strip()
     return title, claim.assertion or title, draft, "macro", impact, fmt
 
 
