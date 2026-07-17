@@ -1,7 +1,8 @@
 """Orchestrate one v2 cycle: Intent → Evidence → Verify → Research → Write.
 
 Runs alongside the legacy pipeline. Step 2 fetches evidence packs and
-enforces minimum bars; scout/write remain dry-run stubs (no drafts).
+enforces minimum bars; Step 3 scout LLM keep/drop Claims. Write remains
+dry-run (no drafts yet).
 """
 
 from __future__ import annotations
@@ -62,6 +63,17 @@ def run_v2_cycle(*, enabled: bool = True, dry_run: bool = True) -> CycleReport:
         report.claims_keep = sum(1 for c in claims if c.status == "keep")
         report.claims_drop = sum(1 for c in claims if c.status == "drop")
         report.claims_waiting = sum(1 for c in claims if c.status == "waiting")
+
+        claims_by_intent = {c.intent_id: c for c in claims}
+        for summary in report.intent_summaries:
+            claim = claims_by_intent.get(summary["id"])
+            if not claim:
+                continue
+            summary["claim_status"] = claim.status
+            summary["claim_reason"] = (claim.reason or "")[:160]
+            summary["confidence"] = claim.confidence
+            if claim.assertion:
+                summary["assertion"] = claim.assertion[:160]
 
         report.drafted = write_from_claims(claims, dry_run=dry_run)
     except Exception as exc:
