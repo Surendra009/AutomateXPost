@@ -265,27 +265,8 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                 discarded = discard_stale_headlines()
                 ingest_count, ingest_by_source, skipped_stale, skipped_dup = ingest_headlines()
 
-                earnings_ingested, _ = process_earnings(budget)
-                if earnings_ingested:
-                    ingest_count += earnings_ingested
-                    ingest_by_source["Finnhub Earnings"] = earnings_ingested
-
-                macro_ingested, _ = process_macro_calendar(budget)
-                if macro_ingested:
-                    ingest_count += macro_ingested
-                    ingest_by_source["Finnhub Macro"] = macro_ingested
-
-                sec_ingested, _ = process_sec_filings(budget)
-                if sec_ingested:
-                    ingest_count += sec_ingested
-                    ingest_by_source["SEC 8-K (structured)"] = sec_ingested
-
-                company_ingested, _ = process_company_news(budget)
-                if company_ingested:
-                    ingest_count += company_ingested
-                    ingest_by_source["Finnhub Company"] = company_ingested
-
-                # Claim-centric v2 — shared budget; queues when PIPELINE_V2_DRY_RUN=false
+                # Claim-centric v2 first — owns earnings/macro/company when live-writing
+                v2_live = PIPELINE_V2_ENABLED and not PIPELINE_V2_DRY_RUN
                 try:
                     from pipeline.v2 import run_v2_cycle
                     from pipeline.v2.cycle import report_for_status
@@ -304,6 +285,32 @@ def _run_pipeline_cycle(*, force: bool = False) -> dict:
                         "pipeline_v2_last_report",
                         {"ran": False, "enabled": PIPELINE_V2_ENABLED, "error": str(v2_exc)[:200]},
                     )
+                    v2_live = False  # fall back to legacy structured lanes
+
+                if v2_live:
+                    logger.info(
+                        "v2 live — skipping legacy Finnhub earnings/macro/company structured drafts"
+                    )
+                else:
+                    earnings_ingested, _ = process_earnings(budget)
+                    if earnings_ingested:
+                        ingest_count += earnings_ingested
+                        ingest_by_source["Finnhub Earnings"] = earnings_ingested
+
+                    macro_ingested, _ = process_macro_calendar(budget)
+                    if macro_ingested:
+                        ingest_count += macro_ingested
+                        ingest_by_source["Finnhub Macro"] = macro_ingested
+
+                    company_ingested, _ = process_company_news(budget)
+                    if company_ingested:
+                        ingest_count += company_ingested
+                        ingest_by_source["Finnhub Company"] = company_ingested
+
+                sec_ingested, _ = process_sec_filings(budget)
+                if sec_ingested:
+                    ingest_count += sec_ingested
+                    ingest_by_source["SEC 8-K (structured)"] = sec_ingested
 
                 headlines = get_unfiltered_headlines(limit=MAX_HEADLINES_PER_CYCLE * 2)
                 headlines = select_headlines_for_filter(headlines, MAX_HEADLINES_PER_CYCLE)
