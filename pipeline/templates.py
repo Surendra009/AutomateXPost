@@ -16,7 +16,7 @@ from pipeline.ai_news import (
 from pipeline.earnings_dedup import earnings_ticker_blocked
 from pipeline.earnings_enrich import enrich_earnings_context
 from pipeline.draft_quality import draft_quality_reason
-from pipeline.earnings_freshness import earnings_period_is_stale
+from pipeline.earnings_freshness import earnings_draft_period_allowed
 from pipeline.earnings_parse import (
     extract_earnings_facts,
     format_earnings_draft,
@@ -156,7 +156,8 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
         return None
     from pipeline.earnings_freshness import parse_quarter_year_from_text
 
-    if earnings_period_is_stale(text):
+    # Lead period must be in-season (blocks "fourth quarter 2025" / "Q4 last year")
+    if not earnings_draft_period_allowed(text):
         return None
     bm = BEAT_MISS.search(headline.title)
     if not bm:
@@ -182,7 +183,7 @@ def try_earnings_template(headline: Headline, classification: dict) -> TemplateD
         skip_web_search=False,
     )
     combined = f"{text} {enrichment.news_context} {enrichment.article_text[:3000]}"
-    if earnings_period_is_stale(combined, quarter=parsed_q, year=parsed_y):
+    if not earnings_draft_period_allowed(combined, quarter=parsed_q, year=parsed_y):
         return None
     if enrichment.news_context or enrichment.article_text:
         facts = enrichment.facts or extract_earnings_facts(combined)
