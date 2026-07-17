@@ -96,7 +96,7 @@ def _build_draft(
 
     if bm and EARNINGS_CONTEXT.search(text):
         from pipeline.earnings_freshness import (
-            earnings_period_is_stale,
+            earnings_draft_period_allowed,
             parse_quarter_year_from_text,
         )
         from pipeline.earnings_parse import extract_earnings_highlights
@@ -107,15 +107,30 @@ def _build_draft(
         if url:
             article = fetch_article_text(url) or ""
         combined = f"{text} {article[:3000]}".strip()
-        if earnings_period_is_stale(combined):
-            logger.info("Skipping prior-period company-news earnings for %s: %s", symbol, headline[:80])
+        # Gate on headline/summary first so body YoY comps can't rescue a stale lead period
+        lead = text.strip()
+        if not earnings_draft_period_allowed(lead):
+            logger.info(
+                "Skipping prior-period company-news earnings for %s: %s",
+                symbol,
+                headline[:80],
+            )
+            return None
+        if not earnings_draft_period_allowed(combined):
+            logger.info(
+                "Skipping prior-period company-news earnings (body) for %s: %s",
+                symbol,
+                headline[:80],
+            )
             return None
 
         facts = extract_earnings_facts(combined if article else text)
         if not facts.has_numbers():
             return None
 
-        parsed_q, parsed_y = parse_quarter_year_from_text(combined)
+        parsed_q, parsed_y = parse_quarter_year_from_text(lead)
+        if parsed_q is None:
+            parsed_q, parsed_y = parse_quarter_year_from_text(combined)
         if parsed_q and not facts.quarter:
             facts.quarter = f"Q{parsed_q}"
 
