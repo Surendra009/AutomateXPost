@@ -7,12 +7,19 @@ Honors dry_run — when true, returns previews without queue inserts.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta
 from typing import Any
 
+from rapidfuzz import fuzz
+from sqlmodel import select
+
+from database import get_session
 from logging_config import setup_logging
+from models import Draft, Headline
 from pipeline.draft_budget import DraftBudget
 from pipeline.earnings_parse import EarningsFacts, extract_earnings_highlights, format_earnings_draft
 from pipeline.macro_calendar import MACRO_TAKEAWAY
+from pipeline.story_key import normalize_title
 from pipeline.structured_common import content_hash, save_structured_draft
 from pipeline.v2.types import Claim, EvidencePack, Intent
 
@@ -21,6 +28,53 @@ logger = setup_logging()
 V2_SOURCE = "Pipeline v2"
 _MAX_V2_DRAFTS = 5
 _MIN_WRITE_CONFIDENCE = 0.65
+
+# Scout assertions are LLM paraphrases — the same story reads differently every
+# cycle, so exact/85+ title dedup never fires. Same-story paraphrases score
+# ~60-75 on token_set_ratio while distinct same-theme stories score ~35-45.
+_V2_DUP_HOURS = 24
+_V2_ASSERTION_FUZZY = 55
+
+
+def _recent_v2_duplicate(
+    *,
+    category: str,
+    url: str,
+    summary: str,
+    seen: list[tuple[str, str, str]],
+) -> str | None:
+    """Reason string when this claim matches a same-cycle or recent v2 draft."""
+    norm = normalize_title(summary or "")
+
+    for seen_category, seen_url, seen_norm in seen:
+        if url and url == seen_url:
+            return "same evidence URL drafted this cycle"
+        if (
+            norm
+            and seen_norm
+            and seen_category == category
+            and fuzz.token_set_ratio(norm, seen_norm) >= _V2_ASSERTION_FUZZY
+        ):
+            return "similar assertion drafted this cycle"
+
+    cutoff = datetime.utcnow() - timedelta(hours=_V2_DUP_HOURS)
+    with get_session() as session:
+        rows = session.exec(
+            select(Draft, Headline)
+            .join(Headline, Draft.headline_id == Headline.id)
+            .where(Headline.source == V2_SOURCE)
+            .where(Draft.created_at >= cutoff)
+        ).all()
+
+    for draft, headline in rows:
+        if url and headline.url == url:
+            return "same evidence URL drafted recently"
+        if not norm or draft.category != category:
+            continue
+        other = normalize_title(headline.summary or headline.title)
+        if other and fuzz.token_set_ratio(norm, other) >= _V2_ASSERTION_FUZZY:
+            return "similar assertion drafted recently"
+    return None
 
 
 def write_from_claims(
@@ -45,6 +99,7 @@ def write_from_claims(
     )
     previews: list[dict[str, Any]] = []
     created = 0
+    seen: list[tuple[str, str, str]] = []  # (category, url, normalized assertion)
 
     for claim in eligible:
         if len(previews) >= _MAX_V2_DRAFTS:
@@ -55,6 +110,20 @@ def write_from_claims(
         if not built:
             continue
         title, summary, draft_text, category, impact, fmt = built
+
+        # Prefer an http(s) evidence URL for the headline row
+        url = next(
+            (u for u in (claim.evidence_urls or []) if str(u).startswith("http")),
+            f"https://v2.local/{claim.intent_id}",
+        )
+        dup_reason = _recent_v2_duplicate(
+            category=category, url=url, summary=summary, seen=seen
+        )
+        if dup_reason:
+            logger.info("v2 write: skipping %s — %s", claim.intent_id, dup_reason)
+            continue
+        seen.append((category, url, normalize_title(summary or "")))
+
         preview = {
             "intent_id": claim.intent_id,
             "kind": claim.kind,
@@ -75,12 +144,9 @@ def write_from_claims(
 
         ticker_list = [t.strip().upper() for t in (claim.tickers or [])[:4] if str(t).strip()]
         tickers_csv = ",".join(ticker_list) if ticker_list else "SPY"
-        # Prefer an http(s) evidence URL for the headline row
-        url = next(
-            (u for u in (claim.evidence_urls or []) if str(u).startswith("http")),
-            f"https://v2.local/{claim.intent_id}",
-        )
-        chash = content_hash(V2_SOURCE, claim.intent_id, title, draft_text[:200])
+        # Stable per intent (ids embed date/period/status) so the same intent
+        # can't re-draft every cycle with a reworded assertion.
+        chash = content_hash(V2_SOURCE, claim.intent_id)
         # earnings_ticker_blocked expects a single symbol
         block_ticker = ticker_list[0] if ticker_list else "SPY"
         ok = save_structured_draft(
