@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
+
 from rapidfuzz import fuzz
 from sqlmodel import select
 
@@ -14,13 +17,37 @@ from pipeline.story_key import normalize_title, title_fingerprint
 logger = setup_logging()
 
 _QUEUE_FUZZY_THRESHOLD = 85
+_V2_SOURCE = "Pipeline v2"
+_V2_LABEL_TITLE = re.compile(r"^([^:]{1,32}):\s")
 
 
 def _group_key(draft: Draft, headline: Headline) -> str:
     earnings_key = earnings_group_key(draft)
     if earnings_key:
         return earnings_key
+    v2_key = _v2_label_key(draft, headline)
+    if v2_key:
+        return v2_key
     return _story_key(headline)
+
+
+def _v2_label_key(draft: Draft, headline: Headline) -> str | None:
+    """One visible v2 draft per intent label per day.
+
+    v2 titles like "Fed: <assertion>" embed an LLM paraphrase that changes
+    every cycle, so title fingerprints never collide for the same story.
+    """
+    if headline.source != _V2_SOURCE:
+        return None
+    match = _V2_LABEL_TITLE.match(headline.title or "")
+    if not match:
+        return None
+    day = (
+        draft.created_at.date().isoformat()
+        if draft.created_at
+        else datetime.utcnow().date().isoformat()
+    )
+    return f"v2:{match.group(1).strip().lower()}:{day}"
 
 
 def _story_key(headline: Headline) -> str:
