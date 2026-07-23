@@ -10,7 +10,7 @@ from security import getenv_secret, validate_security_config
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-APP_BUILD = os.getenv("APP_BUILD", "90")
+APP_BUILD = os.getenv("APP_BUILD", "92")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'postpilot.db'}")
 SECRET_KEY = getenv_secret("SECRET_KEY", "dev-secret-change-in-production")
 APP_PASSWORD = getenv_secret("APP_PASSWORD", "changeme")
@@ -57,8 +57,10 @@ FILTER_MODEL = os.getenv("FILTER_MODEL", "deepseek-chat")
 DRAFT_MODEL = os.getenv("DRAFT_MODEL", "deepseek-chat")
 DRAFT_PROVIDER = os.getenv("DRAFT_PROVIDER", "auto")  # auto | deepseek | anthropic | openai
 FILTER_PROVIDER = os.getenv("FILTER_PROVIDER", "auto")
-ANTHROPIC_FILTER_MODEL = os.getenv("ANTHROPIC_FILTER_MODEL", "claude-3-5-haiku-20241022")
-ANTHROPIC_DRAFT_MODEL = os.getenv("ANTHROPIC_DRAFT_MODEL", "claude-3-5-sonnet-20241022")
+# Claude 3.5 Haiku/Sonnet were retired by Anthropic (Feb 19 / Oct 28) — the API
+# returns 404 for them. Retired ids in env vars are remapped in llm_providers.
+ANTHROPIC_FILTER_MODEL = os.getenv("ANTHROPIC_FILTER_MODEL", "claude-haiku-4-5-20251001")
+ANTHROPIC_DRAFT_MODEL = os.getenv("ANTHROPIC_DRAFT_MODEL", "claude-sonnet-4-6")
 OPENAI_FILTER_MODEL = os.getenv("OPENAI_FILTER_MODEL", "gpt-4o-mini")
 OPENAI_DRAFT_MODEL = os.getenv("OPENAI_DRAFT_MODEL", "gpt-4o-mini")
 DEEPSEEK_DEFAULT_MODEL = os.getenv("DEEPSEEK_DEFAULT_MODEL", "deepseek-chat")

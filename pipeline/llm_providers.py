@@ -56,6 +56,30 @@ def _looks_anthropic_model(model: str) -> bool:
     return lower.startswith("claude")
 
 
+# Anthropic 404s on retired model ids. Remap ids that users may still have in
+# Railway env vars (or that older builds of this app recommended) to active
+# replacements per https://platform.claude.com/docs/en/about-claude/model-deprecations
+_ANTHROPIC_MODEL_ALIASES = {
+    "claude-3-5-haiku-20241022": "claude-haiku-4-5-20251001",
+    "claude-3-5-haiku-latest": "claude-haiku-4-5-20251001",
+    "claude-3-haiku-20240307": "claude-haiku-4-5-20251001",
+    "claude-3-5-sonnet-20240620": "claude-sonnet-4-6",
+    "claude-3-5-sonnet-20241022": "claude-sonnet-4-6",
+    "claude-3-5-sonnet-latest": "claude-sonnet-4-6",
+    "claude-3-7-sonnet-20250219": "claude-sonnet-4-6",
+    "claude-3-7-sonnet-latest": "claude-sonnet-4-6",
+    "claude-3-sonnet-20240229": "claude-sonnet-4-6",
+    "claude-3-opus-20240229": "claude-sonnet-4-6",
+    "claude-3-opus-latest": "claude-sonnet-4-6",
+    "claude-sonnet-4-20250514": "claude-sonnet-4-6",
+    "claude-opus-4-20250514": "claude-sonnet-4-6",
+}
+
+
+def _anthropic_alias(model: str) -> str:
+    return _ANTHROPIC_MODEL_ALIASES.get(model.lower().strip(), model)
+
+
 def _looks_openai_model(model: str) -> bool:
     lower = model.lower()
     return lower.startswith("gpt") or lower.startswith("o1") or lower.startswith("o3")
@@ -75,8 +99,8 @@ def resolve_model_for_provider(provider: str, model: str, *, role: str = "filter
 
     if provider == "anthropic":
         if not raw or _looks_deepseek_model(raw) or _looks_openai_model(raw):
-            return default_anthropic
-        return raw
+            return _anthropic_alias(default_anthropic)
+        return _anthropic_alias(raw)
 
     if provider == "openai":
         if not raw or _looks_deepseek_model(raw) or _looks_anthropic_model(raw):
@@ -86,13 +110,14 @@ def resolve_model_for_provider(provider: str, model: str, *, role: str = "filter
     return raw or DEEPSEEK_DEFAULT_MODEL
 
 
-def _anthropic_error_message(exc: Exception) -> str:
+def _anthropic_error_message(exc: Exception, model: str = "") -> str:
     status = getattr(exc, "status_code", None)
     if status == 404:
         return (
-            "Anthropic model not found — remove FILTER_MODEL=DeepSeek-* from Railway; "
-            "use FILTER_PROVIDER=deepseek and FILTER_MODEL=deepseek-chat, or "
-            "ANTHROPIC_FILTER_MODEL=claude-3-5-haiku-20241022 for Claude"
+            f"Anthropic model '{model or 'unknown'}' not found — likely retired. "
+            "Unset ANTHROPIC_FILTER_MODEL / ANTHROPIC_DRAFT_MODEL on Railway to use "
+            "the defaults, or set an active id (claude-haiku-4-5-20251001 for filter, "
+            "claude-sonnet-4-6 for draft)"
         )
     if status == 401:
         return "Anthropic rejected the API key (HTTP 401)"
@@ -238,10 +263,11 @@ def _call_anthropic(system: str, user: str, model: str, *, max_tokens: int = 102
         _set_llm_error(None)
         return message.content[0].text
     except Exception as exc:
-        msg = _anthropic_error_message(exc)
+        msg = _anthropic_error_message(exc, model)
         _set_llm_error(msg)
         logger.error("Anthropic API error: %s", msg)
-        if retry:
+        # 404 (retired/invalid model) won't succeed on retry with the same id
+        if retry and getattr(exc, "status_code", None) != 404:
             return _call_anthropic(system, user, model, max_tokens=max_tokens, retry=False)
         return None
 
@@ -277,10 +303,19 @@ def call_llm(
         out = _call_deepseek(system, user, model, max_tokens=max_tokens)
         if out:
             return out
+        deepseek_error = get_last_llm_error()
         if retry and explicit == "auto" and ANTHROPIC_API_KEY:
-            logger.info("DeepSeek failed — falling back to Anthropic (%s)", ANTHROPIC_FILTER_MODEL)
-            fallback = resolve_model_for_provider("anthropic", ANTHROPIC_FILTER_MODEL, role=role)
-            return _call_anthropic(system, user, fallback, max_tokens=max_tokens, retry=False)
+            fallback = resolve_model_for_provider("anthropic", "", role=role)
+            logger.info("DeepSeek failed — falling back to Anthropic (%s)", fallback)
+            out = _call_anthropic(system, user, fallback, max_tokens=max_tokens, retry=False)
+            if out:
+                return out
+            # Keep the primary failure visible — the fallback error alone
+            # misdirects debugging toward Anthropic when DeepSeek is the issue
+            _set_llm_error(
+                f"DeepSeek failed: {deepseek_error or 'unknown error'} | "
+                f"Anthropic fallback failed: {get_last_llm_error() or 'unknown error'}"
+            )
         return None
     if resolved == "openai":
         return _call_openai(system, user, model, max_tokens=max_tokens)
