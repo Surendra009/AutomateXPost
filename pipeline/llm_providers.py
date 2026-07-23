@@ -303,10 +303,19 @@ def call_llm(
         out = _call_deepseek(system, user, model, max_tokens=max_tokens)
         if out:
             return out
+        deepseek_error = get_last_llm_error()
         if retry and explicit == "auto" and ANTHROPIC_API_KEY:
-            logger.info("DeepSeek failed — falling back to Anthropic (%s)", ANTHROPIC_FILTER_MODEL)
-            fallback = resolve_model_for_provider("anthropic", ANTHROPIC_FILTER_MODEL, role=role)
-            return _call_anthropic(system, user, fallback, max_tokens=max_tokens, retry=False)
+            fallback = resolve_model_for_provider("anthropic", "", role=role)
+            logger.info("DeepSeek failed — falling back to Anthropic (%s)", fallback)
+            out = _call_anthropic(system, user, fallback, max_tokens=max_tokens, retry=False)
+            if out:
+                return out
+            # Keep the primary failure visible — the fallback error alone
+            # misdirects debugging toward Anthropic when DeepSeek is the issue
+            _set_llm_error(
+                f"DeepSeek failed: {deepseek_error or 'unknown error'} | "
+                f"Anthropic fallback failed: {get_last_llm_error() or 'unknown error'}"
+            )
         return None
     if resolved == "openai":
         return _call_openai(system, user, model, max_tokens=max_tokens)
